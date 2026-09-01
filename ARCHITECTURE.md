@@ -103,26 +103,42 @@ Off-screen pieces are culled by world AABB and cost nothing.
 ## 7. Measured performance (M1)
 
 `node scripts/bench.mjs`, Chromium with software rendering (SwiftShader) in a container,
-1600x1000 viewport, 90 frames of continuous panning per row. Real hardware will be faster;
-these are a floor, not a ceiling.
+90 frames of continuous panning per row, 4400x3000 source image. Real hardware will be
+faster; these are a floor, not a ceiling.
 
-| pieces | median frame | p95 frame | drawn / culled | baked |
-|---|---|---|---|---|
-| 54 | 0.5 ms | 2.0 ms | 54 / 0 | 1.0 MB |
-| 96 | 0.7 ms | 2.2 ms | 96 / 0 | 1.1 MB |
-| 204 | 1.3 ms | 2.8 ms | 204 / 0 | 1.1 MB |
-| 486 | 3.7 ms | 4.4 ms | 486 / 0 | 1.1 MB |
-| 988 | 5.5 ms | 7.9 ms | 988 / 0 | 1.1 MB |
-| 1998 | 12.8 ms | 17.1 ms | 1998 / 0 | 1.2 MB |
-| 1998 at 1:1 zoom | 3.9 ms | 5.9 ms | 94 / 1904 | 3.9 MB |
+Desktop profile (1600x1000, dpr 1) and tablet profile
+(`BENCH_W=1180 BENCH_H=820 BENCH_DPR=2`), fitted to view:
 
-Reading: 2,000 pieces fitted to view is ~78 fps median, ~58 fps at p95, on a software
-rasteriser. Zoomed in, culling removes 95% of the work. Memory stays low because bakes
-follow display resolution, not source resolution.
+| pieces | desktop median / p95 | tablet median / p95 | baked (desktop / tablet) |
+|---|---|---|---|
+| 54 | 0.5 / 2.0 ms | 0.4 / 1.0 ms | 1.0 / 4.1 MB |
+| 204 | 1.3 / 2.8 ms | 1.2 / 1.9 ms | 1.1 / 4.2 MB |
+| 486 | 3.7 / 4.4 ms | 3.3 / 5.2 ms | 1.1 / 4.3 MB |
+| 988 | 5.5 / 7.9 ms | 6.4 / 16.7 ms | 1.1 / 4.4 MB |
+| 1998 | 12.8 / 17.1 ms | 12.9 / 21.4 ms | 1.2 / 4.5 MB |
+
+The dense case — a fully assembled 2,000-piece puzzle inspected at 1:1 zoom, which is
+where per-piece bakes are largest and culling matters most:
+
+| profile | median / p95 | drawn / culled | baked |
+|---|---|---|---|
+| desktop | 4.9 / 11.3 ms | 370 / 1628 | 16.7 MB |
+| tablet (dpr 2) | 4.7 / 10.9 ms | 247 / 1751 | 12.0 MB |
+
+Reading: 2,000 pieces fitted to view is ~78 fps median on a software rasteriser, on both
+profiles. Zoomed in, culling removes 85–90% of the work and memory peaks around 17 MB —
+nowhere near the ~186 MB that a naive full-resolution bake of every piece would cost,
+because bakes follow *display* resolution and the LRU budget bounds the working set.
+
+A methodological note, because it bit this benchmark once: pieces start scattered in a
+ring outside the board, so measuring "zoomed in at the board centre" was measuring an
+empty region and reporting a flatteringly cheap frame (0 pieces drawn). The dense-case row
+now solves the puzzle first. Watch for this if you add profiles.
 
 Conclusion for now: **Canvas2D is sufficient, and a WebGL renderer is not yet justified.**
 Revisit if p95 exceeds 16 ms on real target hardware, or when rotation animation and
-2,000+ pieces are combined.
+2,000+ pieces are combined. The tablet p95 at 988 pieces (16.7 ms) is the first number
+that is close to the line and is worth re-measuring on the actual device.
 
 ## 8. Dependencies and licences
 

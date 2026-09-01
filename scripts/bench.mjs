@@ -56,7 +56,18 @@ const browser = await chromium.launch({
   // Set CHROMIUM_PATH to use a Chromium that Playwright did not download itself.
   ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
 });
-const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+// Override with BENCH_W / BENCH_H / BENCH_DPR to profile a different device, e.g. a
+// tablet: BENCH_W=1180 BENCH_H=820 BENCH_DPR=2 node scripts/bench.mjs
+const page = await browser.newPage({
+  viewport: {
+    width: Number(process.env.BENCH_W ?? 1600),
+    height: Number(process.env.BENCH_H ?? 1000),
+  },
+  deviceScaleFactor: Number(process.env.BENCH_DPR ?? 1),
+});
+console.log(
+  `viewport ${page.viewportSize().width}x${page.viewportSize().height} @ dpr ${process.env.BENCH_DPR ?? 1}\n`,
+);
 page.on('pageerror', (e) => console.error('PAGE ERROR:', e.message));
 
 await page.goto(`http://127.0.0.1:${port}${BASE}`);
@@ -135,10 +146,25 @@ for (const count of COUNTS) {
 // The numbers above are all at fit-to-view zoom, where every piece is on screen but
 // baked small. The opposite case matters just as much: zoomed to 1:1, where each piece
 // bakes at full resolution and culling is what keeps memory bounded.
+//
+// Pieces start scattered in a ring *outside* the board, so zooming into the board centre
+// would measure an empty region and report a flatteringly cheap frame. Put every piece
+// in its solved place first: a nearly-finished 2,000-piece puzzle inspected at 1:1 is
+// both the densest case and the realistic one.
 const zoomed = await page.evaluate(async (frames) => {
   const app = globalThis.__ojs;
+  const state = app.session.state;
+  for (const cluster of state.clusters.values()) {
+    cluster.x = cluster.pivotX;
+    cluster.y = cluster.pivotY;
+    cluster.rotation = 0;
+  }
   app.renderer.bakeCache.clear();
-  app.viewport = { ...app.viewport, zoom: 1 };
+  app.viewport = {
+    x: state.geometry.imageWidth / 2,
+    y: state.geometry.imageHeight / 2,
+    zoom: 1,
+  };
   const times = [];
   for (let i = 0; i < frames; i++) {
     app.viewport = { ...app.viewport, x: app.viewport.x + 6 };

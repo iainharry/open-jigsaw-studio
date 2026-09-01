@@ -16,8 +16,8 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10",
-    "vitest": "^2.1.4"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   },
   "comment:playwright": "scripts/bench.mjs and scripts/smoke.mjs need Playwright. It is deliberately NOT a dependency because it downloads several hundred MB of browsers. Install it only to run them: npm i -D playwright && npx playwright install chromium"
 }
