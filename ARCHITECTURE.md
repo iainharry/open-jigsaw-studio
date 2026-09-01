@@ -179,9 +179,48 @@ A native shell (Tauri 2 or equivalent) is deferred until a concrete limitation f
 rather than adopted on the assumption that it will be needed. `VITE_BASE=/` builds for
 root hosting when that day comes.
 
-## 10. Known limitations after M1
+## 10. Selection, and a correction about groups
 
-- No rotation UI. The model supports it; nothing exposes it.
+Section 2 says a named group is just a cluster with a name. That holds for **connected**
+groups — pieces you have joined and want to name and move as a unit — because a cluster is
+rigid at its members' solved offsets, which is exactly right for joined pieces.
+
+It does **not** hold for trays. "Put all the sky pieces here" involves unconnected pieces
+that must keep independent positions and be packed for convenience, not held at their
+solved offsets. A tray is therefore a genuinely separate concept: a named set of cluster
+ids plus a layout, not a cluster.
+
+Both need the same foundation, which is why selection came first:
+
+- **Selection lives in the interaction layer, not the engine.** Which pieces are
+  highlighted is not part of a puzzle and does not belong in a save file. The engine
+  provides the vocabulary — `moveClusters`, `rotateClusters`, `releaseClusters`,
+  `clustersIntersecting`, `selectionCentre` — so multi-piece operations are one tested
+  function rather than a loop in the UI.
+- **`releaseClusters` must not return dead ids.** Releasing one cluster can absorb another
+  still waiting in the list, so it re-checks membership every iteration and filters the
+  result. Returning a retired id would leave the UI holding a selection of nothing.
+
+## 11. Rotation
+
+Rotation was in the transform model and the snap test from M1; M2 exposed it.
+
+Two rules make it usable rather than merely present:
+
+- **Free rotation is quantised to quarter turns on release.** A twist gesture produces an
+  arbitrary angle, and an arbitrary angle can never satisfy the snap test — the piece
+  would be permanently three degrees off and unsolvable. Quantising means a rough twist
+  gets you close and the app finishes the job.
+- **Turning rotation off straightens every cluster.** With rotation disabled the snap test
+  ignores angle entirely, so a piece left at an angle would snap home while visibly
+  sideways.
+
+A second finger landing mid-drag means "turn this piece", not "abandon it and zoom" — that
+is the gesture people make with a physical piece. The pinch handler checks for an active
+drag before claiming the pointers.
+
+## 12. Known limitations after M2
+
 - No image crop/rotate before generation. Images are downscaled to 4000 px on the long
   edge and used whole.
 - No puzzle library UI. Multiple puzzles are stored in IndexedDB but only the last one
@@ -189,6 +228,13 @@ root hosting when that day comes.
 - No named-group UI. `nameCluster()` exists and round-trips through save files; nothing
   calls it yet.
 - No piece trays.
+- Selection is not saved. Closing the puzzle loses it, which is correct for a highlight
+  but will not be correct once a selection can be named and become a tray.
+- Rotation is quarter turns only. Free angles are supported by the maths but always
+  quantised on release; a "loose" mode allowing arbitrary angles would need the snap
+  tolerance rethought.
+- Grabbing overlapping pieces takes the topmost, which is correct but can feel arbitrary
+  in a dense scatter. This is one of the things trays are meant to relieve.
 - The piece-count cap uses a fixed 60 px minimum piece edge. It is a reasonable default
   but has not been validated against how puzzles actually feel on a tablet.
 - Bake cache eviction is LRU over a byte budget with no cost model — a piece that is

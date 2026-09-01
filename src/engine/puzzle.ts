@@ -7,7 +7,16 @@
  * merges two clusters, but a Node test can, in a millisecond.
  */
 
-import { angleDelta, computePivot, repivot, toWorld, translate } from './clusters.js';
+import {
+  angleDelta,
+  computePivot,
+  pieceWorldBounds,
+  quantiseAngle,
+  repivot,
+  rotateAbout,
+  toWorld,
+  translate,
+} from './clusters.js';
 import { generateGeometry, type GeometryOptions } from './geometry.js';
 import { deriveSeed, makeRng, range } from './rng.js';
 import {
@@ -24,7 +33,8 @@ const SIDES: readonly Side[] = ['top', 'right', 'bottom', 'left'];
 
 export interface PuzzleState {
   readonly geometry: PuzzleGeometry;
-  readonly settings: PuzzleSettings;
+  /** Replaceable: the player can turn rotation on or off during a puzzle. */
+  settings: PuzzleSettings;
   /** Cluster id -> cluster. Ids are stable for the life of a cluster. */
   readonly clusters: Map<number, Cluster>;
   /** Piece id -> cluster id. */
@@ -320,6 +330,137 @@ export function releaseCluster(state: PuzzleState, clusterId: number): { cluster
   }
   if (merges > 0) bringToFront(state, current);
   return { clusterId: current, merges };
+}
+
+// --- Operations on a set of clusters ---------------------------------------
+//
+// Selection lives in the interaction layer, not here: which pieces are highlighted is
+// not part of a puzzle's state and does not belong in a save file. What the engine
+// provides is the vocabulary for acting on several clusters at once, so that multi-piece
+// moves, rotations and releases are one tested operation rather than a loop in the UI.
+
+/** Move several clusters together. */
+export function moveClusters(
+  state: PuzzleState,
+  clusterIds: Iterable<number>,
+  dx: number,
+  dy: number,
+): void {
+  for (const id of clusterIds) {
+    const cluster = state.clusters.get(id);
+    if (cluster) translate(cluster, dx, dy);
+  }
+}
+
+/** Rotate several clusters as a rigid body about one shared world point. */
+export function rotateClusters(
+  state: PuzzleState,
+  clusterIds: Iterable<number>,
+  angle: number,
+  about: Point,
+): void {
+  for (const id of clusterIds) {
+    const cluster = state.clusters.get(id);
+    if (cluster) rotateAbout(cluster, angle, about);
+  }
+}
+
+/** Snap each cluster's rotation to the nearest multiple of `step`, in place. */
+export function quantiseClusterRotations(
+  state: PuzzleState,
+  clusterIds: Iterable<number>,
+  step: number = Math.PI / 2,
+): void {
+  for (const id of clusterIds) {
+    const cluster = state.clusters.get(id);
+    if (cluster) cluster.rotation = quantiseAngle(cluster.rotation, step);
+  }
+}
+
+/**
+ * Release several clusters, resolving snaps for each.
+ *
+ * Order matters and ids are not stable across this call: releasing one cluster can
+ * absorb another that is still waiting in the list. Hence the `has` check on every
+ * iteration and the filter at the end — returning a dead id would leave the UI holding
+ * a selection that no longer exists.
+ */
+export function releaseClusters(
+  state: PuzzleState,
+  clusterIds: Iterable<number>,
+): { clusterIds: number[]; merges: number } {
+  let merges = 0;
+  const landed = new Set<number>();
+  for (const id of clusterIds) {
+    if (!state.clusters.has(id)) continue;
+    const result = releaseCluster(state, id);
+    merges += result.merges;
+    landed.add(result.clusterId);
+  }
+  return {
+    clusterIds: [...landed].filter((id) => state.clusters.has(id)),
+    merges,
+  };
+}
+
+/** World-space bounding box of an entire cluster. */
+export function clusterWorldBounds(
+  state: PuzzleState,
+  clusterId: number,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const cluster = state.clusters.get(clusterId);
+  if (!cluster) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const pieceId of cluster.pieces) {
+    const b = pieceWorldBounds(cluster, state.geometry.pieces[pieceId]!);
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** Clusters whose bounding box overlaps a world-space rectangle. For rubber-band select. */
+export function clustersIntersecting(
+  state: PuzzleState,
+  rect: { x: number; y: number; w: number; h: number },
+): number[] {
+  const minX = Math.min(rect.x, rect.x + rect.w);
+  const maxX = Math.max(rect.x, rect.x + rect.w);
+  const minY = Math.min(rect.y, rect.y + rect.h);
+  const maxY = Math.max(rect.y, rect.y + rect.h);
+
+  const hits: number[] = [];
+  for (const id of state.clusters.keys()) {
+    const b = clusterWorldBounds(state, id);
+    if (!b) continue;
+    if (b.maxX < minX || b.minX > maxX || b.maxY < minY || b.minY > maxY) continue;
+    hits.push(id);
+  }
+  return hits;
+}
+
+/** Centre of the combined bounding box of several clusters. The pivot for group rotation. */
+export function selectionCentre(state: PuzzleState, clusterIds: Iterable<number>): Point | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let any = false;
+  for (const id of clusterIds) {
+    const b = clusterWorldBounds(state, id);
+    if (!b) continue;
+    any = true;
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
+  }
+  return any ? { x: (minX + maxX) / 2, y: (minY + maxY) / 2 } : null;
 }
 
 export function isComplete(state: PuzzleState): boolean {

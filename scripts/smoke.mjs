@@ -93,6 +93,14 @@ const result = await page.evaluate(async () => {
   };
 
   const c1 = state.clusters.get(state.clusterOfPiece[1]);
+  // The scatter is random per run, so another piece can be lying on top of this one.
+  // Hit testing correctly returns whatever is topmost, which would make this test flaky
+  // and would be testing the wrong thing. Raise the intended piece first.
+  const zi = state.zOrder.indexOf(c1.id);
+  if (zi >= 0) {
+    state.zOrder.splice(zi, 1);
+    state.zOrder.push(c1.id);
+  }
   const grabWorld = {
     x: c1.x + (p1.solved.x - c1.pivotX) + p1.bounds.w / 2,
     y: c1.y + (p1.solved.y - c1.pivotY) + p1.bounds.h / 2,
@@ -118,7 +126,8 @@ const result = await page.evaluate(async () => {
     );
 
   fire('pointerdown', from.x, from.y);
-  const grabbed = app.renderer.highlightCluster !== null;
+  // Assert the intended cluster was picked up, not merely that something was.
+  const grabbed = app.renderer.highlightClusters?.has(c1.id) ?? false;
   for (let i = 1; i <= 12; i++) {
     fire('pointermove', from.x + ((to.x - from.x) * i) / 12, from.y + ((to.y - from.y) * i) / 12);
     await new Promise((r) => requestAnimationFrame(r));
@@ -132,7 +141,122 @@ check('pointerdown grabs a piece', result.grabbed);
 check('dragging a piece into place snaps it', result.after < result.before, `${result.before} -> ${result.after} clusters`);
 check('the snapped piece is in a multi-piece group', result.joined >= 2, `${result.joined} pieces`);
 
-// 3. Save and reload restores the board.
+// 3. Rubber-band selection, multi-drag and rotation.
+const fire = `(canvas, type, x, y, id = 1) => canvas.dispatchEvent(new PointerEvent(type, {
+  pointerId: id, pointerType: 'mouse', isPrimary: id === 1, bubbles: true,
+  clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1 }))`;
+
+await page.click('.tool'); // switch to Select mode
+const selected = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const canvas = document.querySelector('.board');
+  const r = canvas.getBoundingClientRect();
+
+  fireEv(canvas, 'pointerdown', r.left + 20, r.top + 20);
+  for (let i = 1; i <= 10; i++) {
+    fireEv(canvas, 'pointermove', r.left + 20 + (r.width - 40) * (i / 10), r.top + 20 + (r.height - 40) * (i / 10));
+    await new Promise((res) => requestAnimationFrame(res));
+  }
+  fireEv(canvas, 'pointerup', r.left + r.width - 20, r.top + r.height - 20);
+  return app.selection.size;
+}, fire);
+check('rubber-band selects many clusters', selected > 3, `${selected} selected`);
+
+await page.click('.tool'); // back to Move mode
+const multi = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const state = app.session.state;
+  const canvas = document.querySelector('.board');
+  const r = canvas.getBoundingClientRect();
+  const vp = () => app.viewport;
+  const toScreen = (p) => ({
+    x: (p.x - vp().x) * vp().zoom + r.width / 2 + r.left,
+    y: (p.y - vp().y) * vp().zoom + r.height / 2 + r.top,
+  });
+
+  const ids = [...app.selection];
+  const pieceIds = ids.flatMap((id) => state.clusters.get(id).pieces);
+  const origin = (pid) => {
+    const c = state.clusters.get(state.clusterOfPiece[pid]);
+    const p = state.geometry.pieces[pid];
+    const dx = p.solved.x - c.pivotX;
+    const dy = p.solved.y - c.pivotY;
+    const cos = Math.cos(c.rotation);
+    const sin = Math.sin(c.rotation);
+    return { x: dx * cos - dy * sin + c.x, y: dx * sin + dy * cos + c.y };
+  };
+
+  const before = new Map(pieceIds.map((pid) => [pid, origin(pid)]));
+  const grabPiece = pieceIds[0];
+  const gp = state.geometry.pieces[grabPiece];
+  const grab = toScreen({
+    x: before.get(grabPiece).x + gp.bounds.w / 2,
+    y: before.get(grabPiece).y + gp.bounds.h / 2,
+  });
+
+  fireEv(canvas, 'pointerdown', grab.x, grab.y);
+  const held = app.renderer.highlightClusters?.size ?? 0;
+  for (let i = 1; i <= 8; i++) {
+    fireEv(canvas, 'pointermove', grab.x + 9 * i, grab.y + 5 * i);
+    await new Promise((res) => requestAnimationFrame(res));
+  }
+
+  // Measured before pointerup on purpose. Releasing snaps the selection together, which
+  // legitimately moves individual clusters by different amounts -- so a post-release
+  // comparison would be testing the snap engine, not whether the drag stayed rigid.
+  const deltas = pieceIds.map((pid) => {
+    const a = before.get(pid);
+    const b = origin(pid);
+    return { dx: b.x - a.x, dy: b.y - a.y };
+  });
+
+  fireEv(canvas, 'pointerup', grab.x + 72, grab.y + 40);
+  const first = deltas[0];
+  const consistent = deltas.every(
+    (d) => Math.abs(d.dx - first.dx) < 0.01 && Math.abs(d.dy - first.dy) < 0.01,
+  );
+  return { held, count: ids.length, moved: Math.hypot(first.dx, first.dy), consistent };
+}, fire);
+check('grabbing one selected piece lifts the whole selection', multi.held === multi.count, `${multi.held} of ${multi.count}`);
+check('the whole selection moves together by one delta', multi.consistent && multi.moved > 1, `moved ${multi.moved.toFixed(1)} world units`);
+
+await page.check('.rotate-on');
+const rotated = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  const ids = [...app.selection].filter((id) => app.session.state.clusters.has(id));
+  const before = ids.map((id) => app.session.state.clusters.get(id).rotation);
+  return { ids: ids.length, before };
+});
+await page.click('[data-act="rotr"]');
+const afterRot = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  const ids = [...app.selection].filter((id) => app.session.state.clusters.has(id));
+  return ids.map((id) => app.session.state.clusters.get(id).rotation);
+});
+const quarter = Math.PI / 2;
+check(
+  'rotate turns the whole selection by a quarter turn',
+  rotated.ids > 0 && afterRot.every((a, i) => Math.abs(Math.abs(a - rotated.before[i]) - quarter) < 1e-6),
+  `${rotated.ids} clusters`,
+);
+check(
+  'rotations land exactly on a quarter turn',
+  afterRot.every((a) => Math.abs(a / quarter - Math.round(a / quarter)) < 1e-9),
+);
+
+await page.keyboard.press('Escape');
+const cleared = await page.evaluate(() => globalThis.__ojs.selection.size);
+check('Escape clears the selection', cleared === 0);
+
+await page.uncheck('.rotate-on');
+const straightened = await page.evaluate(() =>
+  [...globalThis.__ojs.session.state.clusters.values()].every((c) => c.rotation === 0),
+);
+check('turning rotation off straightens every piece', straightened);
+
+// 4. Save and reload restores the board.
 await page.evaluate(() => globalThis.__ojs.save());
 const restored = await page.evaluate(() => globalThis.__ojs.session.state.clusters.size);
 await page.reload();

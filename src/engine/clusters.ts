@@ -108,6 +108,22 @@ export function angleDelta(a: number, b: number): number {
   return Math.abs(normaliseAngle(a - b));
 }
 
+/** Rotate a cluster in place, about its own pivot, leaving its position unchanged. */
+export function setRotation(cluster: Cluster, rotation: number): void {
+  cluster.rotation = normaliseAngle(rotation);
+}
+
+/**
+ * Nearest multiple of `step` to a cluster's rotation.
+ *
+ * Free rotation by gesture produces arbitrary angles, and an arbitrary angle can never
+ * satisfy the snap test. Quantising on release means a twist gets you close and the app
+ * finishes the job, rather than leaving a piece permanently 3 degrees off and unsolvable.
+ */
+export function quantiseAngle(angle: number, step: number = Math.PI / 2): number {
+  return normaliseAngle(Math.round(angle / step) * step);
+}
+
 /** World-space bounding box of a piece under a cluster's transform. */
 export function pieceWorldBounds(
   cluster: Cluster,

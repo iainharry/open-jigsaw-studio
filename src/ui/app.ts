@@ -24,7 +24,7 @@ import {
   type PuzzleState,
   type Viewport,
 } from '../engine/index.js';
-import { PointerInput } from '../input/pointer.js';
+import { PointerInput, type Tool } from '../input/pointer.js';
 import { Renderer } from '../render/renderer.js';
 import { fitTo } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
@@ -72,7 +72,13 @@ export class App {
     referenceImg: HTMLCanvasElement;
     file: HTMLInputElement;
     title: HTMLInputElement;
+    tool: HTMLButtonElement;
+    rotateOn: HTMLInputElement;
   };
+
+  /** Cluster ids the player has selected. Interaction state, never saved. */
+  private readonly selection = new Set<number>();
+  private tool: Tool = 'move';
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -85,7 +91,14 @@ export class App {
         this.viewport = vp;
         this.dirty = true;
       },
+      getTool: () => this.tool,
+      selection: this.selection,
       onChange: () => {
+        this.dirty = true;
+      },
+      onSelectionChange: () => {
+        this.renderer.selection = this.selection;
+        this.updateStatus();
         this.dirty = true;
       },
       onDrop: (result) => {
@@ -93,6 +106,7 @@ export class App {
         this.updateStatus();
       },
     });
+    this.renderer.selection = this.selection;
 
     window.addEventListener('resize', () => {
       this.dirty = true;
@@ -129,6 +143,13 @@ export class App {
           <button class="btn" data-act="shuffle">Shuffle</button>
           <button class="btn" data-act="fit">Fit</button>
           <button class="btn" data-act="ref">Reference</button>
+          <span class="divider"></span>
+          <button class="btn tool" data-act="tool" title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
+          <label class="field">
+            <input type="checkbox" class="rotate-on" /> Rotation
+          </label>
+          <button class="btn rot" data-act="rotl" title="Rotate selection anticlockwise (Shift+R)">&#8634;</button>
+          <button class="btn rot" data-act="rotr" title="Rotate selection clockwise (R)">&#8635;</button>
           <span class="spacer"></span>
           <span class="status"></span>
         </header>
@@ -152,6 +173,8 @@ export class App {
       referenceImg: q<HTMLCanvasElement>('.ref-img'),
       file: q<HTMLInputElement>('.file-btn input'),
       title: q<HTMLInputElement>('.title'),
+      tool: q<HTMLButtonElement>('.tool'),
+      rotateOn: q<HTMLInputElement>('.rotate-on'),
     };
 
     for (const n of PIECE_CHOICES) {
@@ -168,6 +191,23 @@ export class App {
       else if (act === 'shuffle') this.shuffle();
       else if (act === 'fit') this.fit();
       else if (act === 'ref') this.toggleReference();
+      else if (act === 'tool') this.toggleTool();
+      else if (act === 'rotl') this.input.rotateSelection(-Math.PI / 2);
+      else if (act === 'rotr') this.input.rotateSelection(Math.PI / 2);
+    });
+
+    this.els.rotateOn.addEventListener('change', () => {
+      if (!this.session) return;
+      const on = this.els.rotateOn.checked;
+      this.session.state.settings = { ...this.session.state.settings, rotationEnabled: on };
+      // Turning rotation off would otherwise strand any piece left at an angle,
+      // because the snap test stops considering rotation at all.
+      if (!on) {
+        for (const cluster of this.session.state.clusters.values()) cluster.rotation = 0;
+      }
+      this.updateRotationUi();
+      this.dirty = true;
+      void this.save();
     });
 
     this.els.file.addEventListener('change', () => {
@@ -260,11 +300,13 @@ export class App {
       cols,
       imageWidth: image.width,
       imageHeight: image.height,
+      settings: { rotationEnabled: this.els.rotateOn.checked },
       ...GEOMETRY_OPTIONS,
     });
     scatter(state, seed, this.scatterArea(image.width, image.height), {
       avoid: { x: 0, y: 0, w: image.width, h: image.height },
     });
+    this.clearSelection();
 
     const record: PuzzleRecord = {
       id: `p_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
@@ -282,6 +324,7 @@ export class App {
     this.renderer.invalidateGeometry();
     this.renderer.setImage(image, image.width, image.height);
     this.els.title.value = title;
+    this.updateRotationUi();
     this.drawReference();
     this.fit();
     this.playingSince = performance.now();
@@ -322,6 +365,8 @@ export class App {
         Math.abs(n - record.pieceCount) < Math.abs(best - record.pieceCount) ? n : best,
       ),
     );
+    this.clearSelection();
+    this.updateRotationUi();
     this.drawReference();
     if (viewport) this.viewport = viewport;
     else this.fit();
@@ -354,12 +399,13 @@ export class App {
         state.geometry.imageHeight,
         GEOMETRY_OPTIONS,
       ),
-      { ...DEFAULT_SETTINGS },
+      { ...DEFAULT_SETTINGS, rotationEnabled: state.settings.rotationEnabled },
     );
     scatter(fresh, seed, this.scatterArea(image.width, image.height), {
       avoid: { x: 0, y: 0, w: image.width, h: image.height },
     });
     this.session.state = fresh;
+    this.clearSelection();
     this.fit();
     void this.save();
   }
@@ -379,6 +425,30 @@ export class App {
   }
 
   // --- Reference panel ------------------------------------------------------
+
+  private toggleTool(): void {
+    this.tool = this.tool === 'move' ? 'select' : 'move';
+    this.els.tool.textContent = this.tool === 'move' ? 'Move' : 'Select';
+    this.els.tool.classList.toggle('on', this.tool === 'select');
+    this.setStatus(
+      this.tool === 'select'
+        ? 'Select mode — drag the board to lasso pieces. Shift+drag does this in Move mode too.'
+        : 'Move mode — drag the board to pan.',
+    );
+  }
+
+  private updateRotationUi(): void {
+    const on = this.session?.state.settings.rotationEnabled ?? false;
+    this.els.rotateOn.checked = on;
+    for (const btn of this.root.querySelectorAll<HTMLButtonElement>('.rot')) btn.disabled = !on;
+  }
+
+  private clearSelection(): void {
+    if (this.selection.size === 0) return;
+    this.selection.clear();
+    this.renderer.selection = this.selection;
+    this.dirty = true;
+  }
 
   private toggleReference(): void {
     this.els.reference.hidden = !this.els.reference.hidden;
@@ -447,10 +517,20 @@ export class App {
 
   private updateStatus(): void {
     if (!this.session) return;
-    const pct = Math.round(progress(this.session.state) * 100);
     if (isComplete(this.session.state)) {
       const mins = Math.round(this.session.state.elapsedMs / 60000);
       this.setStatus(`Complete — ${mins} minute${mins === 1 ? '' : 's'}`);
+      return;
+    }
+    const pct = Math.round(progress(this.session.state) * 100);
+    if (this.selection.size > 0) {
+      let pieces = 0;
+      for (const id of this.selection) {
+        pieces += this.session.state.clusters.get(id)?.pieces.length ?? 0;
+      }
+      this.setStatus(
+        `${this.selection.size} selected (${pieces} piece${pieces === 1 ? '' : 's'}) · ${pct}% connected`,
+      );
     } else {
       this.setStatus(`${pct}% connected`);
     }

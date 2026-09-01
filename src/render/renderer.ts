@@ -36,8 +36,13 @@ export class Renderer {
   showBoard: boolean;
   background: string;
   boardTint: string;
-  /** Cluster currently being dragged, drawn with a lift shadow. */
-  highlightCluster: number | null = null;
+  /** Clusters currently being dragged, drawn with a lift shadow. */
+  highlightClusters: Set<number> | null = null;
+  /** Clusters in the user's selection, outlined. */
+  selection: ReadonlySet<number> = new Set();
+  /** Rubber-band rectangle in world space while a selection drag is in progress. */
+  band: { x: number; y: number; w: number; h: number } | null = null;
+  selectionColour = '#6aa9ff';
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -132,7 +137,8 @@ export class Renderer {
       const cluster = state.clusters.get(clusterId);
       if (!cluster) continue;
 
-      const lifted = clusterId === this.highlightCluster;
+      const lifted = this.highlightClusters?.has(clusterId) ?? false;
+      const selected = this.selection.has(clusterId);
       const origin = worldToScreen(vp, size, { x: cluster.x, y: cluster.y });
 
       ctx.save();
@@ -146,6 +152,7 @@ export class Renderer {
         ctx.shadowOffsetY = 6 / vp.zoom;
       }
 
+      const visible: number[] = [];
       for (const pieceId of cluster.pieces) {
         const piece = state.geometry.pieces[pieceId]!;
         const wb = pieceWorldBounds(cluster, piece);
@@ -162,10 +169,45 @@ export class Renderer {
           piece.bounds.w,
           piece.bounds.h,
         );
+        visible.push(pieceId);
         drawn++;
       }
 
+      // Outline the selection last, so a piece's own edge never paints over it.
+      if (selected && visible.length > 0) {
+        ctx.shadowColor = 'transparent';
+        ctx.strokeStyle = this.selectionColour;
+        ctx.lineWidth = 2.5 / vp.zoom;
+        ctx.lineJoin = 'round';
+        for (const pieceId of visible) {
+          const piece = state.geometry.pieces[pieceId]!;
+          ctx.save();
+          ctx.translate(piece.solved.x - cluster.pivotX, piece.solved.y - cluster.pivotY);
+          ctx.stroke(this.pathFor(piece));
+          ctx.restore();
+        }
+      }
+
       ctx.restore();
+    }
+
+    if (this.band) {
+      const a = worldToScreen(vp, size, { x: this.band.x, y: this.band.y });
+      const b = worldToScreen(vp, size, {
+        x: this.band.x + this.band.w,
+        y: this.band.y + this.band.h,
+      });
+      const x = Math.min(a.x, b.x);
+      const y = Math.min(a.y, b.y);
+      const w = Math.abs(b.x - a.x);
+      const h = Math.abs(b.y - a.y);
+      ctx.fillStyle = 'rgba(106,169,255,0.12)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = this.selectionColour;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+      ctx.setLineDash([]);
     }
 
     this.stats.piecesDrawn = drawn;

@@ -32,15 +32,27 @@ the `Network:` address it prints rather than `localhost`.
 
 ## Controls
 
-| | mouse | touch / pen |
+| | mouse / pen | touch |
 |---|---|---|
 | move a piece or group | drag it | drag it |
 | pan the board | drag the background | drag the background, or two fingers |
 | zoom | wheel | pinch |
+| select several pieces | Shift+drag the background | **Select** mode, then drag the background |
+| add or remove one piece | Shift+click it | **Select** mode, then tap it |
+| move the whole selection | drag any selected piece | drag any selected piece |
+| clear the selection | Esc, or click empty board | tap empty board |
+| select everything | Ctrl+A | — |
+| rotate the selection | **R** / **Shift+R**, or the ↻ ↺ buttons | ↻ ↺ buttons, or hold a piece and twist with a second finger |
 
 Pieces snap when released near where they belong, and a group that lands in a hole
 connects to every neighbour at once. The footer shows piece count, how many are drawn
 versus culled, frame time, baked-bitmap memory and the number of separate groups.
+
+Rotation is off by default — tick **Rotation** to turn it on. New puzzles then start with
+pieces at random quarter turns. Free twisting is quantised to the nearest quarter turn on
+release, because an arbitrary angle can never satisfy the snap test and would leave a
+piece permanently unsolvable. Turning rotation back off straightens everything, for the
+same reason: with rotation off the snap test stops considering angle at all.
 
 ## Layout
 
