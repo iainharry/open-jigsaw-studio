@@ -156,7 +156,11 @@ export class PointerInput {
     const state = this.cb.getState();
     if (!state) return;
     e.preventDefault();
-    this.canvas.setPointerCapture(e.pointerId);
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Throws if the pointer has already gone; gestures still work without capture.
+    }
 
     const p = this.local(e);
     this.pointers.set(e.pointerId, { x: p.x, y: p.y });
@@ -280,8 +284,12 @@ export class PointerInput {
     this.pointers.delete(e.pointerId);
     const at = this.order.indexOf(e.pointerId);
     if (at >= 0) this.order.splice(at, 1);
-    if (this.canvas.hasPointerCapture(e.pointerId)) {
-      this.canvas.releasePointerCapture(e.pointerId);
+    try {
+      if (this.canvas.hasPointerCapture(e.pointerId)) {
+        this.canvas.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      /* already released */
     }
 
     if (this.pointers.size === 1) {

@@ -34,12 +34,20 @@ body {
 
 .bar {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
   padding: 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
+}
+
+/* Controls that belong together wrap as a unit rather than stranding one button
+   on a line of its own. */
+.group {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .brand {
@@ -132,17 +140,30 @@ body {
   margin: 0 2px 0 0;
 }
 
+/* Split pane. The board and the reference share the stage; a draggable splitter moves
+   the boundary between them. `--ref-size` is clamped in JS so the panel can never end
+   up off-screen the way a CSS `resize` handle allowed. */
 .stage {
   position: relative;
   display: flex;
   min-height: 0;
+  min-width: 0;
+  --ref-size: 300px;
+}
+
+.stage[data-ref='right'] {
+  flex-direction: row;
+}
+
+.stage[data-ref='bottom'] {
+  flex-direction: column;
 }
 
 .board {
-  flex: 1;
+  flex: 1 1 auto;
   display: block;
-  width: 100%;
-  height: 100%;
+  min-width: 0;
+  min-height: 0;
   touch-action: none;
   cursor: grab;
 }
@@ -151,14 +172,50 @@ body {
   cursor: grabbing;
 }
 
-.reference {
-  width: 300px;
+.splitter {
   flex: none;
-  border-left: 1px solid var(--line);
+  background: var(--line);
+  touch-action: none;
+}
+
+.stage[data-ref='right'] > .splitter {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.stage[data-ref='bottom'] > .splitter {
+  height: 6px;
+  cursor: row-resize;
+}
+
+.splitter:hover,
+.splitter.active {
+  background: var(--accent);
+}
+
+.reference {
+  flex: none;
   background: var(--panel);
   padding: 10px;
-  overflow: auto;
-  resize: horizontal;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stage[data-ref='right'] > .reference {
+  width: var(--ref-size);
+}
+
+.stage[data-ref='bottom'] > .reference {
+  height: var(--ref-size);
+}
+
+.stage[data-ref='off'] > .reference,
+.stage[data-ref='off'] > .splitter {
+  display: none;
 }
 
 .ref-head {
@@ -167,13 +224,142 @@ body {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.08em;
+  align-self: flex-start;
 }
 
 .ref-img {
-  width: 100%;
   border-radius: 6px;
   border: 1px solid var(--line);
   display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.name-field {
+  padding-right: 4px;
+}
+
+.name-field .title {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #262c35;
+  padding: 4px 7px;
+  min-width: 14ch;
+}
+
+/* Library overlay.
+   `display: flex` here outranks the browser's `[hidden] { display: none }`, so without
+   the rule below the overlay stays laid out while "hidden" and silently swallows every
+   click on the app behind it. */
+.library[hidden] {
+  display: none;
+}
+
+.library {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 11, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 10;
+}
+
+.lib-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  width: min(760px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lib-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.lib-list {
+  overflow: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-empty {
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.lib-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #1b2028;
+}
+
+.lib-card.current {
+  border-color: var(--accent);
+}
+
+.lib-thumb {
+  width: 92px;
+  height: 62px;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #11151b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.lib-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.lib-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.lib-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lib-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.btn.danger {
+  border-color: #c2564a;
+  color: #ff9b8f;
 }
 
 .foot {
@@ -190,7 +376,7 @@ body {
   .status {
     display: none;
   }
-  .reference {
-    width: 40%;
+  .lib-card {
+    flex-wrap: wrap;
   }
 }

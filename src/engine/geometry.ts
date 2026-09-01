@@ -320,18 +320,37 @@ export function flattenOutline(
 }
 
 /**
- * Largest sensible piece count for an image, given a minimum usable piece size.
+ * Piece-count limits for an image.
  *
- * 2,000 pieces from a phone snapshot gives 43x24 px per piece, which is not a
- * puzzle anyone can solve. The app should say so rather than offer the option.
+ * There are two different thresholds here and conflating them was a mistake.
+ *
+ * `comfortable` is a quality judgement: below this, pieces still carry enough image
+ * detail to be matched by eye at a normal zoom. Above it the puzzle gets harder and
+ * blurrier, which some people actively want. It is advice, not a rule.
+ *
+ * `maximum` is the point where a piece is mostly tab and carries almost no picture --
+ * genuinely not solvable by anyone. That one is worth enforcing.
+ *
+ * The original single 60px threshold silently substituted a smaller count, so asking a
+ * 1920x1080 image for 2,000 pieces quietly produced 576. Refusing is defensible;
+ * refusing without saying so, and without letting the player overrule it, is not.
  */
-export function maxSensiblePieces(
+export function pieceCountLimits(
   imageWidth: number,
   imageHeight: number,
-  minPieceEdgePx = 60,
+): { comfortable: number; maximum: number } {
+  const area = imageWidth * imageHeight;
+  const at = (edge: number): number => Math.max(4, Math.floor(area / (edge * edge)));
+  return { comfortable: at(40), maximum: at(20) };
+}
+
+/** Approximate source pixels along one edge of a piece at the given count. */
+export function pieceEdgePixels(
+  imageWidth: number,
+  imageHeight: number,
+  pieceCount: number,
 ): number {
-  const cells = (imageWidth * imageHeight) / (minPieceEdgePx * minPieceEdgePx);
-  return Math.max(4, Math.floor(cells));
+  return Math.sqrt((imageWidth * imageHeight) / Math.max(1, pieceCount));
 }
 
 /**

@@ -13,7 +13,8 @@ import {
   deserialize,
   generateGeometry,
   isComplete,
-  maxSensiblePieces,
+  pieceCountLimits,
+  pieceEdgePixels,
   progress,
   randomSeed,
   scatter,
@@ -29,10 +30,14 @@ import { Renderer } from '../render/renderer.js';
 import { fitTo } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
 import {
+  deletePuzzle,
   getImage,
   getLastOpened,
   getPuzzle,
   hashBlob,
+  listPuzzles,
+  makeThumbnail,
+  pruneOrphanImages,
   putImage,
   putPuzzle,
   setLastOpened,
@@ -41,9 +46,25 @@ import {
 } from './storage.js';
 
 const PIECE_CHOICES = [12, 20, 50, 100, 200, 300, 500, 1000, 2000];
-const MAX_IMAGE_EDGE = 4000;
+/**
+ * Longest edge kept when importing. Raised from 4000: at 2,000 pieces a 4000px cap
+ * leaves each piece around 60 source pixels, and detail is exactly what a high piece
+ * count needs. 5000px of a 3:2 photo decodes to roughly 66 MB of RGBA, which is the
+ * point where a mid-range tablet starts to care.
+ */
+const MAX_IMAGE_EDGE = 5000;
 const AUTOSAVE_MS = 20_000;
 const GEOMETRY_OPTIONS: GeometryOptions = { vertexJitter: 0.06, tabScale: 1, randomiseTabs: true };
+
+export type RefMode = 'right' | 'bottom' | 'off';
+
+function formatWhen(ms: number): string {
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  return new Date(ms).toLocaleDateString();
+}
 
 interface Session {
   record: PuzzleRecord;
@@ -74,11 +95,18 @@ export class App {
     title: HTMLInputElement;
     tool: HTMLButtonElement;
     rotateOn: HTMLInputElement;
+    stage: HTMLElement;
+    splitter: HTMLElement;
+    refMode: HTMLSelectElement;
+    library: HTMLElement;
+    libList: HTMLElement;
   };
 
   /** Cluster ids the player has selected. Interaction state, never saved. */
   private readonly selection = new Set<number>();
   private tool: Tool = 'move';
+  private refMode: RefMode = 'off';
+  private refSize = 300;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -108,7 +136,23 @@ export class App {
     });
     this.renderer.selection = this.selection;
 
+    // Restore the reference panel layout from last time.
+    try {
+      const savedSize = Number(localStorage.getItem('ojs:refSize'));
+      if (Number.isFinite(savedSize) && savedSize > 0) this.refSize = savedSize;
+      const savedMode = localStorage.getItem('ojs:refMode');
+      if (savedMode === 'right' || savedMode === 'bottom' || savedMode === 'off') {
+        this.refMode = savedMode;
+      }
+    } catch {
+      /* storage disabled; defaults are fine */
+    }
+    this.setReferenceMode(this.refMode);
+
     window.addEventListener('resize', () => {
+      // Re-clamp: a panel sized on a wide monitor must not swallow a narrower window.
+      this.applyReferenceSize();
+      this.drawReference();
       this.dirty = true;
     });
     document.addEventListener('visibilitychange', () => {
@@ -134,7 +178,10 @@ export class App {
       <div class="ojs">
         <header class="bar">
           <strong class="brand">Open Jigsaw Studio</strong>
-          <input class="title" type="text" placeholder="Untitled puzzle" />
+          <label class="field name-field">Name
+            <input class="title" type="text" placeholder="Untitled puzzle" title="Rename this puzzle" />
+          </label>
+          <button class="btn" data-act="library">My puzzles</button>
           <label class="btn file-btn">Load image<input type="file" accept="image/*" hidden /></label>
           <label class="field">Pieces
             <select class="pieces"></select>
@@ -142,25 +189,43 @@ export class App {
           <button class="btn" data-act="new">New puzzle</button>
           <button class="btn" data-act="shuffle">Shuffle</button>
           <button class="btn" data-act="fit">Fit</button>
-          <button class="btn" data-act="ref">Reference</button>
-          <span class="divider"></span>
-          <button class="btn tool" data-act="tool" title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
-          <label class="field">
-            <input type="checkbox" class="rotate-on" /> Rotation
+          <label class="field">Reference
+            <select class="ref-mode">
+              <option value="right">Side</option>
+              <option value="bottom">Below</option>
+              <option value="off">Hidden</option>
+            </select>
           </label>
-          <button class="btn rot" data-act="rotl" title="Rotate selection anticlockwise (Shift+R)">&#8634;</button>
-          <button class="btn rot" data-act="rotr" title="Rotate selection clockwise (R)">&#8635;</button>
+          <span class="divider"></span>
+          <span class="group">
+            <button class="btn tool" data-act="tool" title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
+            <label class="field">
+              <input type="checkbox" class="rotate-on" /> Rotation
+            </label>
+            <button class="btn rot" data-act="rotl" title="Rotate selection anticlockwise (Shift+R)">&#8634;</button>
+            <button class="btn rot" data-act="rotr" title="Rotate selection clockwise (R)">&#8635;</button>
+          </span>
           <span class="spacer"></span>
           <span class="status"></span>
         </header>
-        <main class="stage">
+        <main class="stage" data-ref="off">
           <canvas class="board"></canvas>
-          <aside class="reference" hidden>
+          <div class="splitter" title="Drag to resize the reference image"></div>
+          <aside class="reference">
             <div class="ref-head">Reference</div>
             <canvas class="ref-img"></canvas>
           </aside>
         </main>
         <footer class="foot"><span class="stats"></span></footer>
+        <div class="library" hidden>
+          <div class="lib-panel">
+            <div class="lib-head">
+              <strong>My puzzles</strong>
+              <button class="btn" data-act="close-library">Close</button>
+            </div>
+            <div class="lib-list"></div>
+          </div>
+        </div>
       </div>`;
 
     const q = <T extends Element>(sel: string): T => this.root.querySelector<T>(sel)!;
@@ -175,6 +240,11 @@ export class App {
       title: q<HTMLInputElement>('.title'),
       tool: q<HTMLButtonElement>('.tool'),
       rotateOn: q<HTMLInputElement>('.rotate-on'),
+      stage: q<HTMLElement>('.stage'),
+      splitter: q<HTMLElement>('.splitter'),
+      refMode: q<HTMLSelectElement>('.ref-mode'),
+      library: q<HTMLElement>('.library'),
+      libList: q<HTMLElement>('.lib-list'),
     };
 
     for (const n of PIECE_CHOICES) {
@@ -190,8 +260,9 @@ export class App {
       if (act === 'new') void this.newPuzzle();
       else if (act === 'shuffle') this.shuffle();
       else if (act === 'fit') this.fit();
-      else if (act === 'ref') this.toggleReference();
       else if (act === 'tool') this.toggleTool();
+      else if (act === 'library') void this.openLibrary();
+      else if (act === 'close-library') this.closeLibrary();
       else if (act === 'rotl') this.input.rotateSelection(-Math.PI / 2);
       else if (act === 'rotr') this.input.rotateSelection(Math.PI / 2);
     });
@@ -220,8 +291,22 @@ export class App {
 
     this.els.title.addEventListener('change', () => {
       if (!this.session) return;
-      this.session.record.title = this.els.title.value.trim() || 'Untitled puzzle';
+      const name = this.els.title.value.trim() || 'Untitled puzzle';
+      this.session.record.title = name;
+      this.els.title.value = name;
+      this.setStatus(`Renamed to “${name}”`);
       void this.save();
+    });
+
+    this.els.refMode.addEventListener('change', () => {
+      this.setReferenceMode(this.els.refMode.value as RefMode);
+    });
+
+    this.setupSplitter();
+
+    this.els.library.addEventListener('click', (e) => {
+      // Clicking the dimmed backdrop closes the library.
+      if (e.target === this.els.library) this.closeLibrary();
     });
   }
 
@@ -289,8 +374,9 @@ export class App {
 
   private async startPuzzle(meta: StoredImage, image: ImageBitmap, title: string): Promise<void> {
     const requested = Number(this.els.pieces.value);
-    const cap = maxSensiblePieces(image.width, image.height);
-    const target = Math.min(requested, cap);
+    const limits = pieceCountLimits(image.width, image.height);
+    // Only the hard maximum is enforced. Going past `comfortable` is the player's call.
+    const target = Math.min(requested, limits.maximum);
     const { rows, cols } = chooseGrid(image.width, image.height, target);
     const seed = randomSeed();
 
@@ -318,6 +404,7 @@ export class App {
       lastPlayed: Date.now(),
       completedAt: null,
       progress: 0,
+      thumbnail: makeThumbnail(image, image.width, image.height),
     };
 
     this.session = { record, state, image, imageMeta: meta };
@@ -331,10 +418,20 @@ export class App {
     setLastOpened(record.id);
     await this.save();
 
-    if (requested > cap) {
+    const made = rows * cols;
+    const edge = Math.round(pieceEdgePixels(image.width, image.height, made));
+    if (requested > limits.maximum) {
       this.setStatus(
-        `${rows * cols} pieces — ${requested} would make pieces too small for this image (${image.width}x${image.height}).`,
+        `${made} pieces. ${requested} is more than this ${image.width}×${image.height} image can carry — ` +
+          `the pieces would be almost entirely tab and no picture.`,
       );
+    } else if (made > limits.comfortable) {
+      this.setStatus(
+        `${made} pieces, about ${edge}px each — soft and low-detail from a ${image.width}×${image.height} image, ` +
+          `but perfectly playable if that is the challenge you want.`,
+      );
+    } else {
+      this.setStatus(`${made} pieces, about ${edge}px each.`);
     }
   }
 
@@ -367,6 +464,12 @@ export class App {
     );
     this.clearSelection();
     this.updateRotationUi();
+    // Records written before thumbnails existed get one now, so the library is not
+    // permanently full of blank cards for older puzzles.
+    if (!record.thumbnail) {
+      record.thumbnail = makeThumbnail(bitmap, bitmap.width, bitmap.height);
+      await putPuzzle(record).catch(() => undefined);
+    }
     this.drawReference();
     if (viewport) this.viewport = viewport;
     else this.fit();
@@ -450,22 +553,194 @@ export class App {
     this.dirty = true;
   }
 
-  private toggleReference(): void {
-    this.els.reference.hidden = !this.els.reference.hidden;
+  /**
+   * Reference panel placement and size.
+   *
+   * The first version used CSS `resize: horizontal` on the panel. That grows the element
+   * to the *right*, past the edge of the window, so on a wide monitor the panel ended up
+   * off-screen and reachable only via the page scrollbar. A real splitter that moves the
+   * boundary between the two panes, with the size clamped to the window, is the fix.
+   */
+  private setReferenceMode(mode: RefMode): void {
+    this.refMode = mode;
+    this.els.stage.dataset['ref'] = mode;
+    this.els.refMode.value = mode;
+    try {
+      localStorage.setItem('ojs:refMode', mode);
+    } catch {
+      /* storage disabled; the panel simply starts hidden next time */
+    }
+    this.applyReferenceSize();
     this.drawReference();
     this.dirty = true;
   }
 
+  private applyReferenceSize(): void {
+    const horizontal = this.refMode === 'right';
+    const available = horizontal ? window.innerWidth : window.innerHeight;
+    // Never let the panel take the whole window, and never let it shrink to nothing.
+    const size = Math.max(140, Math.min(this.refSize, Math.round(available * 0.7)));
+    this.refSize = size;
+    this.els.stage.style.setProperty('--ref-size', `${size}px`);
+  }
+
+  private setupSplitter(): void {
+    const el = this.els.splitter;
+    let dragging = false;
+
+    el.addEventListener('pointerdown', (e) => {
+      if (this.refMode === 'off') return;
+      dragging = true;
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        // Throws if the pointer is already gone; the drag still works via the events.
+      }
+      el.classList.add('active');
+      e.preventDefault();
+    });
+
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const rect = this.els.stage.getBoundingClientRect();
+      this.refSize =
+        this.refMode === 'right' ? rect.right - e.clientX : rect.bottom - e.clientY;
+      this.applyReferenceSize();
+      this.drawReference();
+      this.dirty = true;
+    });
+
+    const stop = (e: PointerEvent): void => {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove('active');
+      try {
+        if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      try {
+        localStorage.setItem('ojs:refSize', String(Math.round(this.refSize)));
+      } catch {
+        /* storage disabled; size resets next session */
+      }
+    };
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
+
+    // Double-click the splitter to reset to a sensible width.
+    el.addEventListener('dblclick', () => {
+      this.refSize = 300;
+      this.applyReferenceSize();
+      this.drawReference();
+      this.dirty = true;
+    });
+  }
+
   private drawReference(): void {
-    if (!this.session || this.els.reference.hidden) return;
+    if (!this.session || this.refMode === 'off') return;
     const { image } = this.session;
     const el = this.els.referenceImg;
-    const width = el.clientWidth || 260;
-    const height = Math.round((width * image.height) / image.width);
+    const box = this.els.reference.getBoundingClientRect();
+    const padding = 20;
+    const maxW = Math.max(40, box.width - padding);
+    const maxH = Math.max(40, box.height - padding - 24);
+    const scale = Math.min(maxW / image.width, maxH / image.height);
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
     el.width = width;
     el.height = height;
+    el.style.width = `${width}px`;
     el.style.height = `${height}px`;
     el.getContext('2d')?.drawImage(image, 0, 0, width, height);
+  }
+
+  // --- Library --------------------------------------------------------------
+
+  private async openLibrary(): Promise<void> {
+    await this.save();
+    const records = await listPuzzles().catch(() => [] as PuzzleRecord[]);
+    const list = this.els.libList;
+    list.innerHTML = '';
+
+    if (records.length === 0) {
+      list.innerHTML = '<p class="lib-empty">No saved puzzles yet.</p>';
+    }
+
+    for (const record of records) {
+      const card = document.createElement('div');
+      card.className = 'lib-card';
+      if (this.session?.record.id === record.id) card.classList.add('current');
+
+      const pct = Math.round(record.progress * 100);
+      const state = record.completedAt
+        ? 'Completed'
+        : pct > 0
+          ? `${pct}% connected`
+          : 'Not started';
+
+      card.innerHTML = `
+        <div class="lib-thumb">${
+          record.thumbnail ? `<img alt="" src="${record.thumbnail}" />` : '<span>no preview</span>'
+        }</div>
+        <div class="lib-meta">
+          <div class="lib-title"></div>
+          <div class="lib-sub">${record.pieceCount} pieces · ${state}</div>
+          <div class="lib-sub">Last played ${formatWhen(record.lastPlayed)}</div>
+        </div>
+        <div class="lib-actions">
+          <button class="btn lib-open">Open</button>
+          <button class="btn lib-delete" title="Delete this puzzle">Delete</button>
+        </div>`;
+      // Set the title as text, never as HTML: it is user input.
+      card.querySelector<HTMLElement>('.lib-title')!.textContent = record.title;
+
+      card.querySelector<HTMLButtonElement>('.lib-open')!.addEventListener('click', () => {
+        void this.openFromLibrary(record);
+      });
+      card.querySelector<HTMLButtonElement>('.lib-delete')!.addEventListener('click', (e) => {
+        void this.deleteFromLibrary(record, e.currentTarget as HTMLButtonElement);
+      });
+      list.append(card);
+    }
+
+    this.els.library.hidden = false;
+  }
+
+  private closeLibrary(): void {
+    this.els.library.hidden = true;
+  }
+
+  private async openFromLibrary(record: PuzzleRecord): Promise<void> {
+    this.closeLibrary();
+    if (this.session?.record.id === record.id) return;
+    const ok = await this.openRecord(record).catch(() => false);
+    if (!ok) this.setStatus(`Could not reopen “${record.title}” — its image is missing.`);
+    else setLastOpened(record.id);
+  }
+
+  private async deleteFromLibrary(record: PuzzleRecord, button: HTMLButtonElement): Promise<void> {
+    // Two-step rather than a confirm() dialog: a modal dialog would block the canvas.
+    if (button.dataset['armed'] !== 'yes') {
+      button.dataset['armed'] = 'yes';
+      button.textContent = 'Really delete?';
+      button.classList.add('danger');
+      window.setTimeout(() => {
+        button.dataset['armed'] = '';
+        button.textContent = 'Delete';
+        button.classList.remove('danger');
+      }, 4000);
+      return;
+    }
+
+    await deletePuzzle(record.id).catch(() => undefined);
+    await pruneOrphanImages().catch(() => 0);
+    if (this.session?.record.id === record.id) {
+      this.session.image.close();
+      this.session = null;
+      await this.useDemoImage();
+    }
+    await this.openLibrary();
   }
 
   // --- Saving ---------------------------------------------------------------

@@ -256,14 +256,83 @@ const straightened = await page.evaluate(() =>
 );
 check('turning rotation off straightens every piece', straightened);
 
-// 4. Save and reload restores the board.
+// 4. Reference panel: it must never push the page wider than the window. The first
+//    implementation used CSS `resize: horizontal`, which grew the panel off-screen and
+//    left it reachable only via the page scrollbar.
+const overflow = () =>
+  page.evaluate(() => ({
+    scrollW: document.documentElement.scrollWidth,
+    scrollH: document.documentElement.scrollHeight,
+    innerW: window.innerWidth,
+    innerH: window.innerHeight,
+    panel: (() => {
+      const el = document.querySelector('.reference');
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: r.width, h: r.height };
+    })(),
+  }));
+
+await page.selectOption('.ref-mode', 'right');
+await page.waitForTimeout(250);
+let ov = await overflow();
+check('reference panel (side) is fully on screen', ov.panel.right <= ov.innerW + 1 && ov.panel.w > 50, `right edge ${Math.round(ov.panel.right)} of ${ov.innerW}`);
+check('side reference does not make the page scroll sideways', ov.scrollW <= ov.innerW + 1, `${ov.scrollW} vs ${ov.innerW}`);
+
+// Drag the splitter far past the window edge; the clamp must hold.
+await page.evaluate(async () => {
+  const el = document.querySelector('.splitter');
+  const r = el.getBoundingClientRect();
+  const f = (t, x) => el.dispatchEvent(new PointerEvent(t, { pointerId: 3, pointerType: 'mouse', isPrimary: true, bubbles: true, clientX: x, clientY: r.top + r.height / 2, button: 0, buttons: t === 'pointerup' ? 0 : 1 }));
+  f('pointerdown', r.left + 3);
+  for (let i = 1; i <= 6; i++) { f('pointermove', r.left - i * 400); await new Promise((z) => requestAnimationFrame(z)); }
+  f('pointerup', r.left - 2400);
+});
+await page.waitForTimeout(200);
+ov = await overflow();
+check('dragging the splitter past the edge is clamped', ov.panel.w <= ov.innerW * 0.72 && ov.panel.w > 100, `panel ${Math.round(ov.panel.w)}px of ${ov.innerW}`);
+check('board keeps room after a big splitter drag', ov.panel.left > 40, `board width ${Math.round(ov.panel.left)}px`);
+
+await page.selectOption('.ref-mode', 'bottom');
+await page.waitForTimeout(250);
+ov = await overflow();
+check('reference panel (below) is fully on screen', ov.panel.bottom <= ov.innerH + 1 && ov.panel.h > 50, `bottom edge ${Math.round(ov.panel.bottom)} of ${ov.innerH}`);
+await page.selectOption('.ref-mode', 'off');
+
+// 5. Renaming a puzzle.
+await page.fill('.title', 'Great Ocean Road');
+await page.dispatchEvent('.title', 'change');
+await page.waitForTimeout(200);
+const named = await page.evaluate(() => globalThis.__ojs.session.record.title);
+check('the puzzle can be renamed', named === 'Great Ocean Road', named);
+
+// 6. Library lists saved puzzles and can reopen one.
+await page.click('[data-act="library"]');
+await page.waitForSelector('.lib-card', { timeout: 10_000 });
+const lib = await page.evaluate(() => {
+  const cards = [...document.querySelectorAll('.lib-card')];
+  return {
+    count: cards.length,
+    titles: cards.map((c) => c.querySelector('.lib-title').textContent),
+    thumbs: cards.filter((c) => c.querySelector('.lib-thumb img')).length,
+  };
+});
+check('library lists saved puzzles', lib.count >= 1, `${lib.count} listed`);
+check('library shows the renamed puzzle', lib.titles.includes('Great Ocean Road'), lib.titles.join(', '));
+check('library cards have thumbnails', lib.thumbs === lib.count, `${lib.thumbs}/${lib.count}`);
+await page.click('[data-act="close-library"]');
+
+// 7. Save and reload restores the board.
 await page.evaluate(() => globalThis.__ojs.save());
 const restored = await page.evaluate(() => globalThis.__ojs.session.state.clusters.size);
 await page.reload();
 await page.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
 await page.waitForTimeout(500);
-const afterReload = await page.evaluate(() => globalThis.__ojs.session.state.clusters.size);
-check('progress survives a page reload', afterReload === restored, `${restored} -> ${afterReload} clusters`);
+const afterReload = await page.evaluate(() => ({
+  clusters: globalThis.__ojs.session.state.clusters.size,
+  title: globalThis.__ojs.session.record.title,
+}));
+check('progress survives a page reload', afterReload.clusters === restored, `${restored} -> ${afterReload.clusters} clusters`);
+check('the new name survives a page reload', afterReload.title === 'Great Ocean Road', afterReload.title);
 
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');

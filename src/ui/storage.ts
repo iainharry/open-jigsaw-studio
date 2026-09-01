@@ -32,6 +32,8 @@ export interface PuzzleRecord {
   lastPlayed: number;
   completedAt: number | null;
   progress: number;
+  /** Small data-URL preview, so the library lists without decoding every full image. */
+  thumbnail: string | null;
 }
 
 function open(): Promise<IDBDatabase> {
@@ -92,6 +94,44 @@ export async function getPuzzle(id: string): Promise<PuzzleRecord | undefined> {
 export async function listPuzzles(): Promise<PuzzleRecord[]> {
   const all = await run<PuzzleRecord[]>(PUZZLES, 'readonly', (s) => s.getAll());
   return all.sort((a, b) => b.lastPlayed - a.lastPlayed);
+}
+
+export async function deletePuzzle(id: string): Promise<void> {
+  await run(PUZZLES, 'readwrite', (s) => s.delete(id));
+  if (getLastOpened() === id) setLastOpened(null);
+}
+
+/**
+ * Remove any stored image no puzzle refers to any more.
+ *
+ * Images are shared by content hash, so this cannot simply delete the image belonging to
+ * a deleted puzzle -- another puzzle may have been made from the same photograph.
+ */
+export async function pruneOrphanImages(): Promise<number> {
+  const puzzles = await listPuzzles();
+  const inUse = new Set(puzzles.map((p) => p.imageHash));
+  const hashes = await run<IDBValidKey[]>(IMAGES, 'readonly', (s) => s.getAllKeys());
+  let removed = 0;
+  for (const key of hashes) {
+    if (typeof key === 'string' && !inUse.has(key)) {
+      await run(IMAGES, 'readwrite', (s) => s.delete(key));
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** Small preview for the library, kept as a data URL so listing needs no image decode. */
+export function makeThumbnail(image: CanvasImageSource, width: number, height: number): string {
+  const target = 240;
+  const scale = Math.min(1, target / Math.max(width, height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/webp', 0.7);
 }
 
 /** Id of the puzzle to reopen on startup. Kept in localStorage: it is a UI preference. */

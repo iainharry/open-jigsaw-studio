@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { chooseGrid, flattenOutline, generateGeometry, maxSensiblePieces } from '../geometry.js';
+import {
+  chooseGrid,
+  flattenOutline,
+  generateGeometry,
+  pieceCountLimits,
+  pieceEdgePixels,
+} from '../geometry.js';
 import type { PieceGeometry, Point, PuzzleGeometry, Side } from '../types.js';
 
 const EPS = 1e-6;
@@ -171,9 +177,33 @@ describe('chooseGrid', () => {
   });
 });
 
-describe('maxSensiblePieces', () => {
-  it('allows large counts for a DSLR image and small ones for a phone snapshot', () => {
-    expect(maxSensiblePieces(6000, 4000)).toBeGreaterThan(2000);
-    expect(maxSensiblePieces(1920, 1080)).toBeLessThan(600);
+describe('pieceCountLimits', () => {
+  it('separates the comfortable threshold from the hard maximum', () => {
+    const { comfortable, maximum } = pieceCountLimits(1920, 1080);
+    expect(maximum).toBeGreaterThan(comfortable);
+    // A 1920x1080 image should still be *allowed* 2,000 pieces, just warned about.
+    expect(comfortable).toBeLessThan(2000);
+    expect(maximum).toBeGreaterThan(2000);
+  });
+
+  it('lets a DSLR image have 2,000 pieces comfortably', () => {
+    expect(pieceCountLimits(6000, 4000).comfortable).toBeGreaterThan(2000);
+  });
+
+  it('refuses counts that would make pieces mostly tab', () => {
+    // A small image genuinely cannot support thousands of pieces.
+    expect(pieceCountLimits(640, 480).maximum).toBeLessThan(1000);
+  });
+
+  it('never returns fewer than four', () => {
+    expect(pieceCountLimits(10, 10).maximum).toBeGreaterThanOrEqual(4);
+    expect(pieceCountLimits(10, 10).comfortable).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('pieceEdgePixels', () => {
+  it('reports roughly the source pixels along a piece edge', () => {
+    expect(pieceEdgePixels(1920, 1080, 576)).toBeCloseTo(60, 0);
+    expect(pieceEdgePixels(6000, 4000, 1000)).toBeCloseTo(155, 0);
   });
 });
