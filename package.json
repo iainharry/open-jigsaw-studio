@@ -1,0 +1,23 @@
+{
+  "name": "open-jigsaw-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-source, local-first, cross-platform digital jigsaw studio.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  },
+  "comment:playwright": "scripts/bench.mjs and scripts/smoke.mjs need Playwright. It is deliberately NOT a dependency because it downloads several hundred MB of browsers. Install it only to run them: npm i -D playwright && npx playwright install chromium"
+}

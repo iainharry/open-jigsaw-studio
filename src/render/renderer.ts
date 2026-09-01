@@ -1,0 +1,222 @@
+/**
+ * Canvas2D renderer.
+ *
+ * Deliberately thin: it reads engine state and draws it, and owns no puzzle state of
+ * its own. Everything renderer-specific (baked bitmaps, Path2D objects, device pixel
+ * ratio) lives on this side of the line so that swapping in a WebGL renderer later
+ * means writing a second file, not touching the engine.
+ */
+
+import { pieceWorldBounds, toSolved } from '../engine/clusters.js';
+import { clusterOf, type PuzzleState } from '../engine/puzzle.js';
+import type { Cluster, PieceGeometry, Point, Viewport } from '../engine/types.js';
+import { BakeCache, bakeScaleFor, outlineToPath2D } from './bakeCache.js';
+import { visibleWorldRect, worldToScreen, type ScreenSize } from './viewport.js';
+
+export interface RenderStats {
+  piecesDrawn: number;
+  piecesCulled: number;
+  bakedBytes: number;
+  lastFrameMs: number;
+}
+
+export interface RendererOptions {
+  readonly showBoard?: boolean;
+  readonly background?: string;
+  readonly boardTint?: string;
+}
+
+export class Renderer {
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly hitCtx: CanvasRenderingContext2D;
+  private readonly pathCache = new Map<number, Path2D>();
+  readonly bakeCache: BakeCache;
+  readonly stats: RenderStats = { piecesDrawn: 0, piecesCulled: 0, bakedBytes: 0, lastFrameMs: 0 };
+
+  showBoard: boolean;
+  background: string;
+  boardTint: string;
+  /** Cluster currently being dragged, drawn with a lift shadow. */
+  highlightCluster: number | null = null;
+
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    options: RendererOptions = {},
+  ) {
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) throw new Error('Canvas2D is not available in this browser');
+    this.ctx = ctx;
+
+    // A 1x1 scratch context used only for hit testing, so hit tests never depend on
+    // whatever transform the last frame happened to leave behind.
+    const scratch = document.createElement('canvas');
+    const hitCtx = scratch.getContext('2d');
+    if (!hitCtx) throw new Error('Canvas2D is not available in this browser');
+    this.hitCtx = hitCtx;
+
+    this.bakeCache = new BakeCache();
+    this.showBoard = options.showBoard ?? true;
+    this.background = options.background ?? '#14161a';
+    this.boardTint = options.boardTint ?? 'rgba(255,255,255,0.05)';
+  }
+
+  setImage(image: CanvasImageSource, width: number, height: number): void {
+    this.bakeCache.setSource(image, width, height);
+  }
+
+  invalidateGeometry(): void {
+    this.pathCache.clear();
+    this.bakeCache.clear();
+  }
+
+  private pathFor(piece: PieceGeometry): Path2D {
+    let path = this.pathCache.get(piece.id);
+    if (!path) {
+      path = outlineToPath2D(piece.outline, 1);
+      this.pathCache.set(piece.id, path);
+    }
+    return path;
+  }
+
+  get size(): ScreenSize {
+    return { width: this.canvas.clientWidth, height: this.canvas.clientHeight };
+  }
+
+  /** Resize the backing store to match CSS size and device pixel ratio. */
+  resize(): boolean {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.round(this.canvas.clientWidth * dpr);
+    const h = Math.round(this.canvas.clientHeight * dpr);
+    if (this.canvas.width === w && this.canvas.height === h) return false;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    return true;
+  }
+
+  draw(state: PuzzleState, vp: Viewport): void {
+    const t0 = performance.now();
+    const { ctx } = this;
+    const size = this.size;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = this.background;
+    ctx.fillRect(0, 0, size.width, size.height);
+
+    if (this.showBoard) {
+      const tl = worldToScreen(vp, size, { x: 0, y: 0 });
+      ctx.fillStyle = this.boardTint;
+      ctx.fillRect(
+        tl.x,
+        tl.y,
+        state.geometry.imageWidth * vp.zoom,
+        state.geometry.imageHeight * vp.zoom,
+      );
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(
+        tl.x,
+        tl.y,
+        state.geometry.imageWidth * vp.zoom,
+        state.geometry.imageHeight * vp.zoom,
+      );
+    }
+
+    const view = visibleWorldRect(vp, size, 64);
+    const bakeScale = bakeScaleFor(vp.zoom, dpr, this.bakeCache.maxScale);
+
+    let drawn = 0;
+    let culled = 0;
+
+    for (const clusterId of state.zOrder) {
+      const cluster = state.clusters.get(clusterId);
+      if (!cluster) continue;
+
+      const lifted = clusterId === this.highlightCluster;
+      const origin = worldToScreen(vp, size, { x: cluster.x, y: cluster.y });
+
+      ctx.save();
+      ctx.translate(origin.x, origin.y);
+      if (cluster.rotation !== 0) ctx.rotate(cluster.rotation);
+      ctx.scale(vp.zoom, vp.zoom);
+
+      if (lifted) {
+        ctx.shadowColor = 'rgba(0,0,0,0.55)';
+        ctx.shadowBlur = 18 / vp.zoom;
+        ctx.shadowOffsetY = 6 / vp.zoom;
+      }
+
+      for (const pieceId of cluster.pieces) {
+        const piece = state.geometry.pieces[pieceId]!;
+        const wb = pieceWorldBounds(cluster, piece);
+        if (wb.maxX < view.minX || wb.minX > view.maxX || wb.maxY < view.minY || wb.minY > view.maxY) {
+          culled++;
+          continue;
+        }
+        const baked = this.bakeCache.get(piece, bakeScale);
+        if (!baked) continue;
+        ctx.drawImage(
+          baked.canvas,
+          piece.solved.x - cluster.pivotX,
+          piece.solved.y - cluster.pivotY,
+          piece.bounds.w,
+          piece.bounds.h,
+        );
+        drawn++;
+      }
+
+      ctx.restore();
+    }
+
+    this.stats.piecesDrawn = drawn;
+    this.stats.piecesCulled = culled;
+    this.stats.bakedBytes = this.bakeCache.usedBytes;
+    this.stats.lastFrameMs = performance.now() - t0;
+  }
+
+  /**
+   * Topmost piece under a world point, or null.
+   *
+   * Hit testing happens in piece-local space: the world point is pushed back through
+   * the cluster transform, which means it works unchanged for rotated assemblies and
+   * costs nothing extra when rotation is off.
+   */
+  hitTest(state: PuzzleState, world: Point): { pieceId: number; clusterId: number } | null {
+    for (let i = state.zOrder.length - 1; i >= 0; i--) {
+      const cluster = state.clusters.get(state.zOrder[i]!);
+      if (!cluster) continue;
+      const local = toSolved(cluster, world);
+      for (const pieceId of cluster.pieces) {
+        const piece = state.geometry.pieces[pieceId]!;
+        const px = local.x - piece.bounds.x;
+        const py = local.y - piece.bounds.y;
+        if (px < 0 || py < 0 || px > piece.bounds.w || py > piece.bounds.h) continue;
+        if (this.hitCtx.isPointInPath(this.pathFor(piece), px, py)) {
+          return { pieceId, clusterId: cluster.id };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Bounding box of everything on the board, for "fit to view". */
+  contentBounds(state: PuzzleState): { x: number; y: number; w: number; h: number } {
+    let minX = 0;
+    let minY = 0;
+    let maxX = state.geometry.imageWidth;
+    let maxY = state.geometry.imageHeight;
+    for (const cluster of state.clusters.values()) {
+      for (const pieceId of cluster.pieces) {
+        const wb = pieceWorldBounds(cluster, state.geometry.pieces[pieceId]!);
+        if (wb.minX < minX) minX = wb.minX;
+        if (wb.minY < minY) minY = wb.minY;
+        if (wb.maxX > maxX) maxX = wb.maxX;
+        if (wb.maxY > maxY) maxY = wb.maxY;
+      }
+    }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+}
+
+export { clusterOf };
+export type { Cluster };

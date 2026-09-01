@@ -1,0 +1,7 @@
+node_modules/
+dist/
+smoke.png
+*.local
+.DS_Store
+Thumbs.db
+.vite/
