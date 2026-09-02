@@ -18,6 +18,14 @@ export interface RenderStats {
   piecesCulled: number;
   bakedBytes: number;
   lastFrameMs: number;
+  /**
+   * Median of recent frames.
+   *
+   * `lastFrameMs` alone is misleading in the footer: once the view settles the app stops
+   * drawing, so the last frame recorded is whichever one happened to do the baking after
+   * a zoom or piece-count change. That reads as 80ms when the steady state is nearer 4ms.
+   */
+  medianFrameMs: number;
 }
 
 export interface RendererOptions {
@@ -31,7 +39,14 @@ export class Renderer {
   private readonly hitCtx: CanvasRenderingContext2D;
   private readonly pathCache = new Map<number, Path2D>();
   readonly bakeCache: BakeCache;
-  readonly stats: RenderStats = { piecesDrawn: 0, piecesCulled: 0, bakedBytes: 0, lastFrameMs: 0 };
+  readonly stats: RenderStats = {
+    piecesDrawn: 0,
+    piecesCulled: 0,
+    bakedBytes: 0,
+    lastFrameMs: 0,
+    medianFrameMs: 0,
+  };
+  private readonly recentFrames: number[] = [];
 
   showBoard: boolean;
   background: string;
@@ -213,7 +228,13 @@ export class Renderer {
     this.stats.piecesDrawn = drawn;
     this.stats.piecesCulled = culled;
     this.stats.bakedBytes = this.bakeCache.usedBytes;
-    this.stats.lastFrameMs = performance.now() - t0;
+    const elapsed = performance.now() - t0;
+    this.stats.lastFrameMs = elapsed;
+
+    this.recentFrames.push(elapsed);
+    if (this.recentFrames.length > 60) this.recentFrames.shift();
+    const sorted = [...this.recentFrames].sort((a, b) => a - b);
+    this.stats.medianFrameMs = sorted[sorted.length >> 1] ?? elapsed;
   }
 
   /**

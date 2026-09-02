@@ -219,7 +219,58 @@ A second finger landing mid-drag means "turn this piece", not "abandon it and zo
 is the gesture people make with a physical piece. The pinch handler checks for an active
 drag before claiming the pointers.
 
-## 12. Known limitations after M2
+## 12. Zoom, and the hard limit on legible pieces
+
+A 500-piece puzzle arrived on a 31-inch monitor with 28-pixel pieces. The cause was the
+default view: opening a puzzle fitted *all* content, and the scatter ring made total
+content five times the board area, so the app opened zoomed most of the way out.
+
+Fixed three ways: the ring is now sized from the area the pieces actually need rather
+than a fixed fraction of the board; a new puzzle opens fitted to the **board**, not to
+everything; and there are real zoom controls with an on-screen piece-size readout.
+
+But there is an arithmetic ceiling underneath, and no zoom default can move it. On a
+2560x1300 canvas:
+
+| piece size | area of 500 pieces | share of the screen |
+|---|---|---|
+| 40 px | 0.8 M px² | 24% |
+| 55 px | 1.5 M px² | 45% |
+| 64 px | 2.1 M px² | 62% |
+| 80 px | 3.2 M px² | 96% |
+
+Above about 55–65 px the pieces alone cover most of the screen, before any gaps between
+them or the board they are being assembled on. **You cannot show 500 legible pieces at
+once on any monitor.** Fit-board lands at roughly 64 px for a 3000x2000 photo, which is
+essentially the ceiling. Beyond that the player must work zoomed in and pan — which is
+the argument for piece trays, and the reason they are the next feature rather than a
+nicety.
+
+### Frame-time reporting
+
+The footer reported 83 ms/frame at 486 pieces where a benchmark of the same view measured
+1.3 ms. `lastFrameMs` was the culprit: once the view settles the app stops drawing, so the
+last frame recorded is whichever one happened to bake a few hundred pieces after a zoom
+change. The footer now shows the median of the last 60 frames. The benchmark still samples
+`lastFrameMs` per frame and computes its own median, which is correct there.
+
+The underlying spike is real, if minor: a zoom change invalidates the bake bucket and
+re-bakes every visible piece in a single frame. A per-frame baking budget would smooth it.
+Not built — it is one stutter after a zoom, not a steady-state cost.
+
+### Measured on a 2560x1400 canvas (dpr 1), fitted to board
+
+| pieces | median | p95 | drawn / culled |
+|---|---|---|---|
+| 204 | 0.7 ms | 1.4 ms | 99 / 105 |
+| 486 | 1.3 ms | 2.3 ms | 174 / 312 |
+| 988 | 2.7 ms | 5.0 ms | 353 / 635 |
+| 1998 | 5.0 ms | 10.2 ms | 688 / 1310 |
+
+Faster than the fit-all figures in section 7 precisely because fitting the board zooms in
+further, so culling removes more work.
+
+## 13. Known limitations after M2
 
 - No image crop/rotate before generation. Images are downscaled to 4000 px on the long
   edge and used whole.

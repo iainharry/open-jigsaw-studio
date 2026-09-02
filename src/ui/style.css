@@ -122,10 +122,25 @@ body {
   border-color: var(--line);
 }
 
-.btn.rot {
+.btn.rot,
+.btn.zoom {
   font-size: 17px;
   line-height: 1;
   padding: 4px 10px;
+}
+
+.zoom-readout {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 5ch;
+  text-align: center;
+  font-size: 12px;
+}
+
+/* Pieces are small enough to be a strain -- worth flagging rather than leaving the
+   player to wonder why a 500-piece puzzle is unreadable. */
+.zoom-readout.tight {
+  color: #ffc98f;
 }
 
 .divider {

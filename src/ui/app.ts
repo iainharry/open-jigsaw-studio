@@ -27,7 +27,7 @@ import {
 } from '../engine/index.js';
 import { PointerInput, type Tool } from '../input/pointer.js';
 import { Renderer } from '../render/renderer.js';
-import { fitTo } from '../render/viewport.js';
+import { fitTo, zoomAbout } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
 import {
   deletePuzzle,
@@ -100,6 +100,7 @@ export class App {
     refMode: HTMLSelectElement;
     library: HTMLElement;
     libList: HTMLElement;
+    zoomReadout: HTMLElement;
   };
 
   /** Cluster ids the player has selected. Interaction state, never saved. */
@@ -188,7 +189,13 @@ export class App {
           </label>
           <button class="btn" data-act="new">New puzzle</button>
           <button class="btn" data-act="shuffle">Shuffle</button>
-          <button class="btn" data-act="fit">Fit</button>
+          <span class="group">
+            <button class="btn zoom" data-act="zoom-out" title="Zoom out (−)">&minus;</button>
+            <span class="zoom-readout" title="Zoom, and how big a piece is on screen">100%</span>
+            <button class="btn zoom" data-act="zoom-in" title="Zoom in (+)">+</button>
+            <button class="btn" data-act="fit-board" title="Fit the picture area (0)">Fit board</button>
+            <button class="btn" data-act="fit-all" title="Fit everything including loose pieces (9)">Fit all</button>
+          </span>
           <label class="field">Reference
             <select class="ref-mode">
               <option value="right">Side</option>
@@ -245,6 +252,7 @@ export class App {
       refMode: q<HTMLSelectElement>('.ref-mode'),
       library: q<HTMLElement>('.library'),
       libList: q<HTMLElement>('.lib-list'),
+      zoomReadout: q<HTMLElement>('.zoom-readout'),
     };
 
     for (const n of PIECE_CHOICES) {
@@ -259,7 +267,10 @@ export class App {
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
       if (act === 'new') void this.newPuzzle();
       else if (act === 'shuffle') this.shuffle();
-      else if (act === 'fit') this.fit();
+      else if (act === 'fit-board') this.fitBoard();
+      else if (act === 'fit-all') this.fitAll();
+      else if (act === 'zoom-in') this.zoomBy(1.25);
+      else if (act === 'zoom-out') this.zoomBy(1 / 1.25);
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
@@ -303,6 +314,18 @@ export class App {
     });
 
     this.setupSplitter();
+
+    window.addEventListener('keydown', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === '+' || e.key === '=') this.zoomBy(1.25);
+      else if (e.key === '-' || e.key === '_') this.zoomBy(1 / 1.25);
+      else if (e.key === '0') this.fitBoard();
+      else if (e.key === '9') this.fitAll();
+      else return;
+      e.preventDefault();
+    });
 
     this.els.library.addEventListener('click', (e) => {
       // Clicking the dimmed backdrop closes the library.
@@ -413,7 +436,7 @@ export class App {
     this.els.title.value = title;
     this.updateRotationUi();
     this.drawReference();
-    this.fit();
+    this.fitBoard();
     this.playingSince = performance.now();
     setLastOpened(record.id);
     await this.save();
@@ -472,7 +495,7 @@ export class App {
     }
     this.drawReference();
     if (viewport) this.viewport = viewport;
-    else this.fit();
+    else this.fitBoard();
     this.playingSince = performance.now();
     this.dirty = true;
     this.setStatus(`Resumed “${record.title}”`);
@@ -509,22 +532,62 @@ export class App {
     });
     this.session.state = fresh;
     this.clearSelection();
-    this.fit();
+    this.fitBoard();
     void this.save();
   }
 
+  /**
+   * The ring the loose pieces are scattered into.
+   *
+   * Sized from the area the pieces actually need, not a fixed fraction of the board.
+   * Every piece together covers roughly the image area whatever the piece count, so a
+   * ring of about 2.5x that gives room to lay them out. The old 0.62 margin made the
+   * whole content five times the board area, and since the app opened by fitting all of
+   * it, a 500-piece puzzle arrived on screen with 28-pixel pieces.
+   */
   private scatterArea(w: number, h: number): { x: number; y: number; w: number; h: number } {
-    // A generous margin around the board. Pieces land in the ring outside the board
-    // (see the `avoid` option), so this needs enough room for every piece.
-    const mx = w * 0.62;
-    const my = h * 0.62;
+    const margin = 0.5;
+    const mx = w * margin;
+    const my = h * margin;
     return { x: -mx, y: -my, w: w + mx * 2, h: h + my * 2 };
   }
 
-  private fit(): void {
+  /** Fit the picture area. The default for a new puzzle: pieces stay legible. */
+  private fitBoard(): void {
+    if (!this.session) return;
+    const g = this.session.state.geometry;
+    this.viewport = fitTo(this.renderer.size, {
+      x: 0,
+      y: 0,
+      w: g.imageWidth,
+      h: g.imageHeight,
+    });
+    this.dirty = true;
+  }
+
+  /** Fit everything, loose pieces included. The overview, on request. */
+  private fitAll(): void {
     if (!this.session) return;
     this.viewport = fitTo(this.renderer.size, this.renderer.contentBounds(this.session.state));
     this.dirty = true;
+  }
+
+  private zoomBy(factor: number): void {
+    const size = this.renderer.size;
+    this.viewport = zoomAbout(
+      this.viewport,
+      size,
+      { x: size.width / 2, y: size.height / 2 },
+      factor,
+    );
+    this.dirty = true;
+  }
+
+  /** On-screen size in CSS pixels of one piece at the current zoom. */
+  private pieceScreenPx(): number {
+    if (!this.session) return 0;
+    const g = this.session.state.geometry;
+    return Math.min(g.cellWidth, g.cellHeight) * this.viewport.zoom;
   }
 
   // --- Reference panel ------------------------------------------------------
@@ -783,10 +846,18 @@ export class App {
     if (!this.session) return;
     const s = this.renderer.stats;
     const mb = (s.bakedBytes / (1024 * 1024)).toFixed(1);
+    const piecePx = Math.round(this.pieceScreenPx());
+
+    this.els.zoomReadout.textContent = `${Math.round(this.viewport.zoom * 100)}%`;
+    this.els.zoomReadout.title = `Pieces are about ${piecePx}px on screen`;
+    // Flag a zoom where pieces have become genuinely hard to see.
+    this.els.zoomReadout.classList.toggle('tight', piecePx < 34);
+
     this.els.stats.textContent =
       `${this.session.state.geometry.pieces.length} pieces · ` +
+      `~${piecePx}px on screen · ` +
       `${s.piecesDrawn} drawn, ${s.piecesCulled} culled · ` +
-      `${s.lastFrameMs.toFixed(1)} ms/frame · ${mb} MB baked · ` +
+      `${s.medianFrameMs.toFixed(1)} ms/frame · ${mb} MB baked · ` +
       `${this.session.state.clusters.size} groups`;
   }
 

@@ -36,7 +36,9 @@ the `Network:` address it prints rather than `localhost`.
 |---|---|---|
 | move a piece or group | drag it | drag it |
 | pan the board | drag the background | drag the background, or two fingers |
-| zoom | wheel | pinch |
+| zoom | wheel, or **+** / **−** | pinch, or the +/− buttons |
+| fit the picture area | **0**, or **Fit board** | **Fit board** |
+| fit everything | **9**, or **Fit all** | **Fit all** |
 | select several pieces | Shift+drag the background | **Select** mode, then drag the background |
 | add or remove one piece | Shift+click it | **Select** mode, then tap it |
 | move the whole selection | drag any selected piece | drag any selected piece |
@@ -45,8 +47,15 @@ the `Network:` address it prints rather than `localhost`.
 | rotate the selection | **R** / **Shift+R**, or the ↻ ↺ buttons | ↻ ↺ buttons, or hold a piece and twist with a second finger |
 
 Pieces snap when released near where they belong, and a group that lands in a hole
-connects to every neighbour at once. The footer shows piece count, how many are drawn
-versus culled, frame time, baked-bitmap memory and the number of separate groups.
+connects to every neighbour at once. The footer shows piece count, how big a piece is on
+screen, how many are drawn versus culled, median frame time, baked-bitmap memory and the
+number of separate groups.
+
+A new puzzle opens fitted to the **board**, not to everything — fitting the loose pieces
+too means zooming so far out that a 500-piece puzzle arrives with 28-pixel pieces. The
+toolbar readout turns amber when pieces drop below about 34 px. Note that above roughly
+55–65 px per piece, 500 pieces cover most of any monitor, so seeing them all at once and
+seeing them clearly are genuinely in tension; `ARCHITECTURE.md` §12 has the arithmetic.
 
 Rotation is off by default — tick **Rotation** to turn it on. New puzzles then start with
 pieces at random quarter turns. Free twisting is quantised to the nearest quarter turn on

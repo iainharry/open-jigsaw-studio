@@ -298,6 +298,51 @@ ov = await overflow();
 check('reference panel (below) is fully on screen', ov.panel.bottom <= ov.innerH + 1 && ov.panel.h > 50, `bottom edge ${Math.round(ov.panel.bottom)} of ${ov.innerH}`);
 await page.selectOption('.ref-mode', 'off');
 
+// 4b. A new puzzle must open at a zoom where pieces are legible. Fitting *all* content
+//     includes the scatter ring, which is several times the board area, so a 500-piece
+//     puzzle used to arrive on screen with 28px pieces on a large monitor.
+await page.selectOption('.pieces', '500');
+await page.waitForFunction(() => globalThis.__ojs.session.state.geometry.pieces.length > 300, null, { timeout: 60_000 });
+await page.waitForTimeout(400);
+
+const zoomCheck = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const g = app.session.state.geometry;
+  const cell = Math.min(g.cellWidth, g.cellHeight);
+  const px = () => cell * app.viewport.zoom;
+
+  const onOpen = px();
+  document.querySelector('[data-act="fit-all"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  const fitAll = px();
+  document.querySelector('[data-act="fit-board"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  const fitBoard = px();
+  document.querySelector('[data-act="zoom-in"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  const zoomedIn = px();
+
+  return { pieces: g.pieces.length, onOpen, fitAll, fitBoard, zoomedIn };
+});
+
+check(
+  'a new 500-piece puzzle opens with legible pieces',
+  zoomCheck.onOpen >= 34,
+  `${zoomCheck.onOpen.toFixed(0)}px per piece at ${zoomCheck.pieces} pieces`,
+);
+check(
+  'opening at fit-board beats fitting the whole scatter',
+  zoomCheck.fitBoard > zoomCheck.fitAll * 1.4,
+  `${zoomCheck.fitBoard.toFixed(0)}px vs ${zoomCheck.fitAll.toFixed(0)}px`,
+);
+check('the zoom-in button enlarges pieces', zoomCheck.zoomedIn > zoomCheck.fitBoard, `${zoomCheck.zoomedIn.toFixed(0)}px`);
+
+const readout = await page.textContent('.zoom-readout');
+check('zoom readout shows a percentage', /^\d+%$/.test(readout.trim()), readout);
+
+await page.selectOption('.pieces', '50');
+await page.waitForFunction(() => globalThis.__ojs.session.state.geometry.pieces.length < 100, null, { timeout: 60_000 });
+
 // 5. Renaming a puzzle.
 await page.fill('.title', 'Great Ocean Road');
 await page.dispatchEvent('.title', 'change');
