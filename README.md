@@ -3,8 +3,9 @@
 An open-source, local-first, cross-platform digital jigsaw studio. Works fully offline.
 No account, no server, no network.
 
-**Status: M1.** A playable puzzle engine — import an image, generate 12 to 2,000 pieces,
-drag, snap, resume. Everything else on the roadmap is still ahead.
+**Status: M3.** Import a picture, cut it into 12–2,000 pieces, drag, snap, rotate,
+multi-select, sort into named trays, and keep a library of puzzles in progress. All
+offline, with no runtime dependencies.
 
 ## Running it
 
@@ -25,7 +26,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 38 headless engine tests, ~1.5 s |
+| `npm test` | 84 headless engine tests, ~1.4 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -57,6 +58,13 @@ toolbar readout turns amber when pieces drop below about 34 px. Note that above 
 55–65 px per piece, 500 pieces cover most of any monitor, so seeing them all at once and
 seeing them clearly are genuinely in tension; `ARCHITECTURE.md` §12 has the arithmetic.
 
+## Finding your way around
+
+Every control in the toolbar explains itself. Point at it with a mouse and a short
+description appears. On a tablet there is no hover, so press **?** to enter help mode and
+tap any control to read what it does instead of pressing it — Esc, or **?** again, to
+leave. There is deliberately no separate user guide to fall out of date.
+
 ## Trays
 
 A tray is a named holding area — the digital equivalent of tipping the sky pieces into a
@@ -66,6 +74,7 @@ editor that appears over its title bar.
 | | |
 |---|---|
 | put pieces in | drag them onto the tray, or select and press **New tray** |
+| gather the edges | **Edges** selects every border piece; then **New tray** |
 | take pieces out | drag them off onto open board |
 | move the tray | drag its title bar |
 | rename | click its title bar |
@@ -130,9 +139,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 
 ## Roadmap
 
-M1 is done. Next is named groups and piece trays, then image preparation (crop, rotate),
-then the puzzle library. See `ARCHITECTURE.md` section 10 for what M1 deliberately does
-not do.
+Done: the puzzle engine, selection and rotation, the puzzle library, zoom controls, and
+piece trays. Next: sorting pieces into trays automatically (by colour, and by image
+region), then crop and rotate before generating. `ARCHITECTURE.md` §15 lists what is
+deliberately not built.
 
 ## Licence
 

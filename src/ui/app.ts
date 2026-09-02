@@ -11,6 +11,7 @@ import {
   chooseGrid,
   createPuzzle,
   deserialize,
+  edgeClusters,
   generateGeometry,
   isComplete,
   pieceCountLimits,
@@ -111,7 +112,17 @@ export class App {
     zoomReadout: HTMLElement;
     trayList: HTMLSelectElement;
     trayRename: HTMLInputElement;
+    tip: HTMLElement;
   };
+
+  /**
+   * Help mode. Hover tooltips cover a mouse, but a tablet has no hover at all, so
+   * pointing at a control can never explain it there. In help mode a tap shows the
+   * explanation instead of pressing the button, which is the only way to make the same
+   * help reachable by touch without shipping a separate manual.
+   */
+  private helpMode = false;
+  private tipTimer: number | null = null;
 
   /** Tray the toolbar acts on. Set by tapping a tray or creating one. */
   private activeTray: number | null = null;
@@ -201,24 +212,24 @@ export class App {
       <div class="ojs">
         <header class="bar">
           <strong class="brand">Open Jigsaw Studio</strong>
-          <label class="field name-field">Name
+          <label class="field name-field" data-help="The puzzle's name. Click here and type to rename it; it shows in My puzzles.">Name
             <input class="title" type="text" placeholder="Untitled puzzle" title="Rename this puzzle" />
           </label>
-          <button class="btn" data-act="library">My puzzles</button>
-          <label class="btn file-btn">Load image<input type="file" accept="image/*" hidden /></label>
-          <label class="field">Pieces
+          <button class="btn" data-act="library" data-help="Every puzzle you have made is saved here. Reopen one where you left off, or delete ones you have finished with.">My puzzles</button>
+          <label class="btn file-btn" data-help="Choose a picture from this computer. It stays on your machine; nothing is uploaded.">Load image<input type="file" accept="image/*" hidden /></label>
+          <label class="field" data-help="How many pieces to cut the picture into. Press New puzzle to apply it. Very high counts on a small picture make soft, low-detail pieces.">Pieces
             <select class="pieces"></select>
           </label>
-          <button class="btn" data-act="new">New puzzle</button>
-          <button class="btn" data-act="shuffle">Shuffle</button>
+          <button class="btn" data-act="new" data-help="Cut the same picture again into the number of pieces chosen above. Your current progress on it is replaced.">New puzzle</button>
+          <button class="btn" data-act="shuffle" data-help="Break everything apart and scatter it again. The picture and piece count stay the same.">Shuffle</button>
           <span class="group">
-            <button class="btn zoom" data-act="zoom-out" title="Zoom out (−)">&minus;</button>
-            <span class="zoom-readout" title="Zoom, and how big a piece is on screen">100%</span>
-            <button class="btn zoom" data-act="zoom-in" title="Zoom in (+)">+</button>
-            <button class="btn" data-act="fit-board" title="Fit the picture area (0)">Fit board</button>
-            <button class="btn" data-act="fit-all" title="Fit everything including loose pieces (9)">Fit all</button>
+            <button class="btn zoom" data-act="zoom-out" data-help="Make pieces smaller so you can see more at once. Keyboard: −" title="Zoom out (−)">&minus;</button>
+            <span class="zoom-readout" data-help="Current zoom, and how big one piece is on screen. It turns amber when pieces get too small to see comfortably." title="Zoom, and how big a piece is on screen">100%</span>
+            <button class="btn zoom" data-act="zoom-in" data-help="Make pieces bigger. The number to the left shows how big a piece is on screen. Keyboard: +" title="Zoom in (+)">+</button>
+            <button class="btn" data-act="fit-board" data-help="Zoom so the whole picture area fits the window. This is where a new puzzle starts. Keyboard: 0" title="Fit the picture area (0)">Fit board</button>
+            <button class="btn" data-act="fit-all" data-help="Zoom out far enough to see every loose piece as well as the board. Keyboard: 9" title="Fit everything including loose pieces (9)">Fit all</button>
           </span>
-          <label class="field">Reference
+          <label class="field" data-help="Show the finished picture beside or below the board so you can see what you are building. Drag the bar between the two to resize.">Reference
             <select class="ref-mode">
               <option value="right">Side</option>
               <option value="bottom">Below</option>
@@ -227,20 +238,22 @@ export class App {
           </label>
           <span class="divider"></span>
           <span class="group">
-            <button class="btn" data-act="new-tray" title="Put the selected pieces in a new tray (T)">New tray</button>
-            <select class="tray-list" title="Jump to a tray"><option value="">Trays…</option></select>
-            <button class="btn tray-only" data-act="collapse-tray" title="Collapse or expand the selected tray">Collapse</button>
-            <button class="btn tray-only" data-act="empty-tray" title="Tip the tray out onto the board and remove it">Empty</button>
+            <button class="btn" data-act="select-edges" data-help="Select every edge and corner piece. Press New tray straight after to gather them all in one place.">Edges</button>
+            <button class="btn" data-act="new-tray" data-help="Put the selected pieces into a new tray. With nothing selected you get an empty tray to drag pieces into. Keyboard: T" title="Put the selected pieces in a new tray (T)">New tray</button>
+            <select class="tray-list" data-help="Jump the view to one of your trays, and choose which tray the Collapse and Empty buttons act on." title="Jump to a tray"><option value="">Trays…</option></select>
+            <button class="btn tray-only" data-act="collapse-tray" data-help="Shrink the selected tray to a single bar, hiding its pieces so they stop cluttering the board. Press again to open it." title="Collapse or expand the selected tray">Collapse</button>
+            <button class="btn tray-only" data-act="empty-tray" data-help="Remove the selected tray. Its pieces are tipped back onto the board, not deleted." title="Tip the tray out onto the board and remove it">Empty</button>
           </span>
           <span class="divider"></span>
           <span class="group">
-            <button class="btn tool" data-act="tool" title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
-            <label class="field">
+            <button class="btn tool" data-act="tool" data-help="Move: dragging the background pans the board. Select: dragging the background lassoes pieces instead. On a PC, Shift and drag always lassoes." title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
+            <label class="field" data-help="Start pieces at random quarter turns, so they must be turned as well as placed. Turning this off straightens everything again.">
               <input type="checkbox" class="rotate-on" /> Rotation
             </label>
-            <button class="btn rot" data-act="rotl" title="Rotate selection anticlockwise (Shift+R)">&#8634;</button>
-            <button class="btn rot" data-act="rotr" title="Rotate selection clockwise (R)">&#8635;</button>
+            <button class="btn rot" data-act="rotl" data-help="Turn the selected pieces a quarter turn anticlockwise. Needs Rotation switched on. Keyboard: Shift+R" title="Rotate selection anticlockwise (Shift+R)">&#8634;</button>
+            <button class="btn rot" data-act="rotr" data-help="Turn the selected pieces a quarter turn clockwise. Needs Rotation switched on. Keyboard: R" title="Rotate selection clockwise (R)">&#8635;</button>
           </span>
+          <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           <span class="spacer"></span>
           <span class="status"></span>
         </header>
@@ -254,6 +267,7 @@ export class App {
           </aside>
         </main>
         <footer class="foot"><span class="stats"></span></footer>
+        <div class="tip" hidden></div>
         <div class="library" hidden>
           <div class="lib-panel">
             <div class="lib-head">
@@ -285,7 +299,9 @@ export class App {
       zoomReadout: q<HTMLElement>('.zoom-readout'),
       trayList: q<HTMLSelectElement>('.tray-list'),
       trayRename: q<HTMLInputElement>('.tray-rename'),
+      tip: q<HTMLElement>('.tip'),
     };
+    this.setupHelp();
 
     for (const n of PIECE_CHOICES) {
       const opt = document.createElement('option');
@@ -306,6 +322,8 @@ export class App {
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
+      else if (act === 'help') this.setHelpMode(!this.helpMode);
+      else if (act === 'select-edges') this.selectEdges();
       else if (act === 'new-tray') this.newTray();
       else if (act === 'collapse-tray') this.toggleActiveTray();
       else if (act === 'empty-tray') this.emptyActiveTray();
@@ -770,6 +788,91 @@ export class App {
     el.getContext('2d')?.drawImage(image, 0, 0, width, height);
   }
 
+  // --- Help -----------------------------------------------------------------
+
+  private setupHelp(): void {
+    const bar = this.root.querySelector<HTMLElement>('.bar')!;
+
+    const target = (e: Event): HTMLElement | null =>
+      (e.target as HTMLElement).closest<HTMLElement>('[data-help]');
+
+    bar.addEventListener('pointerover', (e) => {
+      const el = target(e);
+      if (!el) return;
+      // A short delay so sweeping the mouse across the toolbar does not flash tooltips.
+      if (this.tipTimer !== null) window.clearTimeout(this.tipTimer);
+      this.tipTimer = window.setTimeout(() => this.showTip(el), this.helpMode ? 0 : 350);
+    });
+
+    bar.addEventListener('pointerout', (e) => {
+      if (!target(e)) return;
+      if (this.tipTimer !== null) window.clearTimeout(this.tipTimer);
+      if (!this.helpMode) this.hideTip();
+    });
+
+    // Keyboard users get the same text on focus.
+    bar.addEventListener('focusin', (e) => {
+      const el = target(e);
+      if (el) this.showTip(el);
+    });
+    bar.addEventListener('focusout', () => this.hideTip());
+
+    // In help mode a press explains rather than acts. Both events have to be caught:
+    // swallowing `pointerdown` alone still lets the browser deliver the `click` that the
+    // toolbar's own handler listens for, so the button fired anyway. A `change` on a
+    // select would likewise act without ever producing a click.
+    const intercept = (e: Event): void => {
+      if (!this.helpMode) return;
+      const el = target(e);
+      if (!el || el.matches('.help-toggle')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.showTip(el);
+    };
+    bar.addEventListener('pointerdown', intercept, true);
+    bar.addEventListener('click', intercept, true);
+    bar.addEventListener('change', intercept, true);
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.helpMode) this.setHelpMode(false);
+    });
+  }
+
+  private setHelpMode(on: boolean): void {
+    this.helpMode = on;
+    const toggle = this.root.querySelector<HTMLButtonElement>('.help-toggle');
+    toggle?.classList.toggle('on', on);
+    if (on) {
+      this.setStatus('Help mode — point at or tap any control to see what it does. Esc to leave.');
+    } else {
+      this.hideTip();
+      this.updateStatus();
+    }
+  }
+
+  private showTip(el: HTMLElement): void {
+    const text = el.dataset['help'];
+    if (!text) return;
+    const tip = this.els.tip;
+    tip.textContent = text;
+    tip.hidden = false;
+
+    const box = el.getBoundingClientRect();
+    const rootBox = this.root.getBoundingClientRect();
+    // Measure after filling, then clamp so a tooltip near the right edge stays on screen.
+    const width = tip.offsetWidth;
+    const left = Math.max(
+      8,
+      Math.min(box.left - rootBox.left + box.width / 2 - width / 2, rootBox.width - width - 8),
+    );
+    tip.style.left = `${left}px`;
+    tip.style.top = `${box.bottom - rootBox.top + 8}px`;
+  }
+
+  private hideTip(): void {
+    this.els.tip.hidden = true;
+  }
+
   // --- Trays ----------------------------------------------------------------
 
   /**
@@ -839,6 +942,20 @@ export class App {
       }
     }
     return { x, y };
+  }
+
+  /** Select every edge and corner piece — the first move in solving any real puzzle. */
+  private selectEdges(): void {
+    if (!this.session) return;
+    const ids = edgeClusters(this.session.state);
+    this.selection.clear();
+    for (const id of ids) this.selection.add(id);
+    this.renderer.selection = this.selection;
+    this.updateStatus();
+    this.dirty = true;
+    this.setStatus(
+      `${ids.length} edge piece${ids.length === 1 ? '' : 's'} selected. Press New tray to gather them.`,
+    );
   }
 
   private toggleActiveTray(): void {

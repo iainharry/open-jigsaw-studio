@@ -318,7 +318,24 @@ Trays took the save file to v2. A v1 file loads with no trays, which is what it 
 Members that no longer exist are dropped on load, so a hand-edited or corrupt file cannot
 leave a tray holding phantom ids.
 
-## 14. Known limitations after M2
+## 14. In-app help instead of a manual
+
+Every toolbar control carries a `data-help` sentence, shown as a styled tooltip on hover
+or keyboard focus. A smoke check asserts that no control is missing one, so the help cannot
+quietly rot as controls are added.
+
+`title` attributes were not enough on their own: they are slow, unstyled, truncate badly,
+and — the decisive problem — **do not exist on touch**. A tablet has no hover, so pointing
+at a control can never explain it there. Hence help mode: the **?** button makes a press
+show the explanation instead of performing the action, which is the only way the same help
+is reachable by finger without shipping a separate manual.
+
+Implementation note worth keeping: help mode has to intercept `pointerdown`, `click` *and*
+`change` in the capture phase. Swallowing `pointerdown` alone still lets the browser deliver
+the `click` the toolbar listens for, so the button fired anyway — the first version looked
+right and did nothing.
+
+## 15. Known limitations after M2
 
 - No image crop/rotate before generation. Images are downscaled to 4000 px on the long
   edge and used whole.

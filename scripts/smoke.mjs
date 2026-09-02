@@ -489,6 +489,55 @@ check('dragging a piece out of a tray frees it', pulled.free, `tray now holds ${
 const trayListed = await page.evaluate(() => [...document.querySelector('.tray-list').options].map((o) => o.textContent));
 check('the tray appears in the tray list', trayListed.some((t) => t.includes('Blue sky')), trayListed.join(' | '));
 
+// 4d. Edge selection and the in-app help.
+await page.click('[data-act="select-edges"]');
+await page.waitForTimeout(250);
+const edges = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  const s = app.session.state;
+  const ids = [...app.selection];
+  const allBorder = ids.every((id) =>
+    s.clusters.get(id).pieces.some((pid) => {
+      const n = s.geometry.pieces[pid].neighbours;
+      return n.top < 0 || n.right < 0 || n.bottom < 0 || n.left < 0;
+    }),
+  );
+  return { count: ids.length, allBorder, total: s.geometry.pieces.length };
+});
+check('Edges selects the border pieces', edges.count > 4 && edges.count < edges.total, `${edges.count} of ${edges.total}`);
+check('every piece Edges selects really is on the border', edges.allBorder);
+await page.keyboard.press('Escape');
+
+// Help: hovering shows an explanation, and help mode makes a press explain not act.
+await page.click('[data-act="help"]');
+await page.waitForTimeout(150);
+await page.hover('[data-act="shuffle"]');
+await page.waitForTimeout(300);
+const tip = await page.evaluate(() => {
+  const t = document.querySelector('.tip');
+  const r = t.getBoundingClientRect();
+  return { hidden: t.hidden, len: (t.textContent || '').length, left: r.left, right: r.right };
+});
+check('hovering a control shows help text', !tip.hidden && tip.len > 20, `${tip.len} chars`);
+check('the tooltip stays on screen', tip.left >= 0 && tip.right <= 1500, `${Math.round(tip.left)}..${Math.round(tip.right)}`);
+
+const traysBefore = await page.evaluate(() => globalThis.__ojs.session.state.trays.size);
+await page.click('[data-act="new-tray"]');
+await page.waitForTimeout(250);
+const traysAfter = await page.evaluate(() => globalThis.__ojs.session.state.trays.size);
+check('help mode explains instead of acting', traysBefore === traysAfter, `${traysBefore} -> ${traysAfter} trays`);
+
+await page.keyboard.press('Escape');
+await page.waitForTimeout(150);
+check('Escape leaves help mode', await page.evaluate(() => globalThis.__ojs.helpMode === false));
+
+const missing = await page.evaluate(() =>
+  [...document.querySelectorAll('.bar [data-act], .bar label.field, .bar label.btn')]
+    .filter((el) => !el.closest('[data-help]'))
+    .map((el) => el.dataset.act || el.className),
+);
+check('every toolbar control carries help text', missing.length === 0, missing.join(', ') || 'all covered');
+
 // 5. Renaming a puzzle.
 await page.fill('.title', 'Great Ocean Road');
 await page.dispatchEvent('.title', 'change');

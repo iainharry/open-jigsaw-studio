@@ -5,6 +5,7 @@ import {
   clusterWorldBounds,
   clustersIntersecting,
   createPuzzle,
+  edgeClusters,
   mergeClusters,
   moveCluster,
   moveClusters,
@@ -179,6 +180,39 @@ describe('rubber-band selection', () => {
     mergeClusters(s, clusterOf(s, 0).id, clusterOf(s, 1).id);
     const after = clusterWorldBounds(s, clusterOf(s, 0).id)!;
     expect(after.maxX).toBeGreaterThan(before.maxX);
+  });
+});
+
+describe('edgeClusters', () => {
+  it('finds exactly the border pieces of a grid', () => {
+    const s = puzzle(5, 6);
+    const edges = edgeClusters(s);
+    // A 5x6 grid has 30 pieces, of which 3x4 = 12 are interior, so 18 are border.
+    expect(edges).toHaveLength(18);
+    for (const id of edges) {
+      const piece = s.geometry.pieces[clusterOf(s, s.clusters.get(id)!.pieces[0]!).pieces[0]!]!;
+      const borders = [piece.neighbours.top, piece.neighbours.right, piece.neighbours.bottom, piece.neighbours.left].filter((n) => n < 0).length;
+      expect(borders).toBeGreaterThan(0);
+    }
+  });
+
+  it('finds the four corners', () => {
+    const s = puzzle(5, 6);
+    expect(edgeClusters(s, { cornersOnly: true })).toHaveLength(4);
+  });
+
+  it('returns the cluster a border piece has joined, not the piece', () => {
+    const s = puzzle(4, 4);
+    // Join corner piece 0 to its neighbour 1; both are border pieces of one cluster.
+    mergeClusters(s, clusterOf(s, 0).id, clusterOf(s, 1).id);
+    const edges = edgeClusters(s);
+    const joined = clusterOf(s, 0).id;
+    expect(edges.filter((id) => id === joined)).toHaveLength(1);
+  });
+
+  it('treats every piece of a 1xN puzzle as an edge', () => {
+    const s = puzzle(1, 4);
+    expect(edgeClusters(s)).toHaveLength(4);
   });
 });
 

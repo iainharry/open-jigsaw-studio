@@ -425,3 +425,33 @@ body {
     flex-wrap: wrap;
   }
 }
+
+/* Hover / tap help. `title` attributes are slow, unstyled, and invisible on touch,
+   so the app carries its own explanations instead of a separate user guide. */
+.tip {
+  position: absolute;
+  z-index: 20;
+  max-width: 42ch;
+  background: #10141a;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.tip[hidden] {
+  display: none;
+}
+
+.help-toggle {
+  font-weight: 700;
+  min-width: 32px;
+}
+
+.ojs {
+  position: relative;
+}

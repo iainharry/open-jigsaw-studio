@@ -505,6 +505,31 @@ export function progress(state: PuzzleState): number {
   return joined / total;
 }
 
+/**
+ * Clusters containing at least one border piece.
+ *
+ * Every physical puzzler starts with the edges, and picking them out by eye from a
+ * scatter of 500 is exactly the tedium trays are meant to relieve. The information is
+ * already in the geometry — a border piece has a neighbour id of -1 — so this costs
+ * nothing to provide.
+ */
+export function edgeClusters(
+  state: PuzzleState,
+  options: { cornersOnly?: boolean } = {},
+): number[] {
+  const wanted = options.cornersOnly ? 2 : 1;
+  const found = new Set<number>();
+  for (const piece of state.geometry.pieces) {
+    let borders = 0;
+    for (const side of SIDES) if (piece.neighbours[side] < 0) borders++;
+    if (borders >= wanted) {
+      const clusterId = state.clusterOfPiece[piece.id];
+      if (clusterId !== undefined && state.clusters.has(clusterId)) found.add(clusterId);
+    }
+  }
+  return [...found];
+}
+
 /** Assign or clear a user-visible name on a cluster. The hook for named groups. */
 export function nameCluster(state: PuzzleState, clusterId: number, name: string | null): void {
   const cluster = state.clusters.get(clusterId);
