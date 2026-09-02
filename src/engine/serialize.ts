@@ -12,10 +12,17 @@
 import { computePivot } from './clusters.js';
 import { generateGeometry, type GeometryOptions } from './geometry.js';
 import { stateFromGeometry, type PuzzleState } from './puzzle.js';
-import { DEFAULT_SETTINGS, type Cluster, type PuzzleSettings, type Viewport } from './types.js';
+import {
+  DEFAULT_SETTINGS,
+  type Cluster,
+  type PuzzleSettings,
+  type Tray,
+  type Viewport,
+} from './types.js';
 
 export const SAVE_FORMAT = 'open-jigsaw-studio/puzzle-state';
-export const SAVE_VERSION = 1;
+/** v2 added trays. A v1 file loads with no trays, which is exactly what it had. */
+export const SAVE_VERSION = 2;
 
 export interface SavedCluster {
   id: number;
@@ -43,6 +50,9 @@ export interface SavedPuzzle {
   nextClusterId: number;
   elapsedMs: number;
   viewport: Viewport | null;
+  /** Added in v2. Absent in v1 files. */
+  trays?: Tray[];
+  nextTrayId?: number;
 }
 
 export function serialize(
@@ -75,6 +85,8 @@ export function serialize(
     nextClusterId: state.nextClusterId,
     elapsedMs: state.elapsedMs,
     viewport,
+    trays: [...state.trays.values()].map((t) => ({ ...t, clusters: [...t.clusters] })),
+    nextTrayId: state.nextTrayId,
   };
 }
 
@@ -122,6 +134,24 @@ export function deserialize(saved: SavedPuzzle): { state: PuzzleState; viewport:
   }
   state.nextClusterId = saved.nextClusterId;
   state.elapsedMs = saved.elapsedMs;
+
+  // v1 files have no trays; the loop simply does nothing, which is the correct migration.
+  for (const saved_tray of saved.trays ?? []) {
+    const tray: Tray = { ...saved_tray, clusters: [] };
+    state.trays.set(tray.id, tray);
+    for (const clusterId of saved_tray.clusters) {
+      // Skip ids that no longer exist, so a corrupt or hand-edited file cannot leave the
+      // tray holding phantom members that break packing.
+      if (!state.clusters.has(clusterId)) continue;
+      tray.clusters.push(clusterId);
+      state.trayOfCluster.set(clusterId, tray.id);
+    }
+  }
+  state.nextTrayId = Math.max(
+    saved.nextTrayId ?? 1,
+    ...[...state.trays.keys()].map((id) => id + 1),
+    1,
+  );
 
   return { state, viewport: saved.viewport };
 }

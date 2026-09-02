@@ -10,4 +10,5 @@ export * from './rng.js';
 export * from './geometry.js';
 export * from './clusters.js';
 export * from './puzzle.js';
+export * from './trays.js';
 export * from './serialize.js';

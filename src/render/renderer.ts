@@ -9,7 +9,15 @@
 
 import { pieceWorldBounds, toSolved } from '../engine/clusters.js';
 import { clusterOf, type PuzzleState } from '../engine/puzzle.js';
-import type { Cluster, PieceGeometry, Point, Viewport } from '../engine/types.js';
+import {
+  isHidden,
+  isOnHeader,
+  trayAt,
+  trayBounds,
+  trayMetrics,
+  trayPieceCount,
+} from '../engine/trays.js';
+import type { Cluster, PieceGeometry, Point, Tray, Viewport } from '../engine/types.js';
 import { BakeCache, bakeScaleFor, outlineToPath2D } from './bakeCache.js';
 import { visibleWorldRect, worldToScreen, type ScreenSize } from './viewport.js';
 
@@ -58,6 +66,8 @@ export class Renderer {
   /** Rubber-band rectangle in world space while a selection drag is in progress. */
   band: { x: number; y: number; w: number; h: number } | null = null;
   selectionColour = '#6aa9ff';
+  /** Tray highlighted because it is selected, or because a drag is hovering over it. */
+  selectedTray: number | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -145,12 +155,21 @@ export class Renderer {
     const view = visibleWorldRect(vp, size, 64);
     const bakeScale = bakeScaleFor(vp.zoom, dpr, this.bakeCache.maxScale);
 
+    // Trays paint first, behind their contents.
+    this.drawTrays(state, vp, size);
+
     let drawn = 0;
     let culled = 0;
 
     for (const clusterId of state.zOrder) {
       const cluster = state.clusters.get(clusterId);
       if (!cluster) continue;
+      // A collapsed tray's pieces are not drawn at all. That is the whole point of the
+      // feature: fifty pieces become one tile and stop competing for screen space.
+      if (isHidden(state, clusterId)) {
+        culled += cluster.pieces.length;
+        continue;
+      }
 
       const lifted = this.highlightClusters?.has(clusterId) ?? false;
       const selected = this.selection.has(clusterId);
@@ -237,6 +256,70 @@ export class Renderer {
     this.stats.medianFrameMs = sorted[sorted.length >> 1] ?? elapsed;
   }
 
+  private drawTrays(state: PuzzleState, vp: Viewport, size: ScreenSize): void {
+    const { ctx } = this;
+    const { header } = trayMetrics(state);
+
+    for (const tray of state.trays.values()) {
+      const b = trayBounds(state, tray);
+      const tl = worldToScreen(vp, size, { x: b.x, y: b.y });
+      const w = b.w * vp.zoom;
+      const h = b.h * vp.zoom;
+      if (tl.x + w < 0 || tl.x > size.width || tl.y + h < 0 || tl.y > size.height) continue;
+
+      const selected = this.selectedTray === tray.id;
+      const radius = Math.min(10, h / 2);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(tl.x, tl.y, w, h, radius);
+      ctx.fillStyle = tray.collapsed ? 'rgba(32,40,52,0.96)' : 'rgba(26,32,41,0.82)';
+      ctx.fill();
+      ctx.strokeStyle = selected ? this.selectionColour : 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = selected ? 2 : 1;
+      ctx.stroke();
+
+      // Header bar.
+      const headerH = Math.min(header * vp.zoom, h);
+      ctx.beginPath();
+      ctx.roundRect(tl.x, tl.y, w, headerH, [radius, radius, 0, 0]);
+      ctx.fillStyle = selected ? 'rgba(106,169,255,0.22)' : 'rgba(255,255,255,0.07)';
+      ctx.fill();
+
+      const fontPx = Math.max(9, Math.min(headerH * 0.52, 16));
+      if (fontPx >= 9) {
+        ctx.font = `600 ${fontPx}px system-ui, sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(230,233,238,0.95)';
+        const chevron = tray.collapsed ? '▸' : '▾';
+        const count = trayPieceCount(state, tray);
+        const label = `${chevron} ${tray.name}`;
+        const suffix = `${count}`;
+        const pad = fontPx * 0.6;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(tl.x, tl.y, Math.max(0, w - pad), headerH);
+        ctx.clip();
+        ctx.fillText(label, tl.x + pad, tl.y + headerH / 2);
+        ctx.restore();
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(141,151,166,0.95)';
+        ctx.fillText(suffix, tl.x + w - pad, tl.y + headerH / 2);
+        ctx.textAlign = 'left';
+      }
+      ctx.restore();
+    }
+  }
+
+  /** The tray whose header or body is under a world point. */
+  trayHitTest(state: PuzzleState, world: Point): { tray: Tray; onHeader: boolean } | null {
+    const tray = trayAt(state, world);
+    if (!tray) return null;
+    return { tray, onHeader: isOnHeader(state, tray, world) };
+  }
+
   /**
    * Topmost piece under a world point, or null.
    *
@@ -248,6 +331,8 @@ export class Renderer {
     for (let i = state.zOrder.length - 1; i >= 0; i--) {
       const cluster = state.clusters.get(state.zOrder[i]!);
       if (!cluster) continue;
+      // Not drawn means not grabbable.
+      if (isHidden(state, cluster.id)) continue;
       const local = toSolved(cluster, world);
       for (const pieceId of cluster.pieces) {
         const piece = state.geometry.pieces[pieceId]!;

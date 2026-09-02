@@ -27,6 +27,7 @@ import {
   type PuzzleGeometry,
   type PuzzleSettings,
   type Side,
+  type Tray,
 } from './types.js';
 
 const SIDES: readonly Side[] = ['top', 'right', 'bottom', 'left'];
@@ -42,6 +43,11 @@ export interface PuzzleState {
   /** Cluster ids from back to front. */
   zOrder: number[];
   nextClusterId: number;
+  /** Named holding areas. See `trays.ts`. */
+  readonly trays: Map<number, Tray>;
+  /** Cluster id -> the tray holding it, if any. */
+  readonly trayOfCluster: Map<number, number>;
+  nextTrayId: number;
   /** Milliseconds of solving time accumulated in previous sessions. */
   elapsedMs: number;
 }
@@ -93,6 +99,9 @@ export function stateFromGeometry(
     clusterOfPiece,
     zOrder,
     nextClusterId: geometry.pieces.length,
+    trays: new Map(),
+    trayOfCluster: new Map(),
+    nextTrayId: 1,
     elapsedMs: 0,
   };
 }
@@ -256,6 +265,15 @@ export function mergeClusters(state: PuzzleState, keeperId: number, absorbedId: 
   const pivot = computePivot(state.geometry, keeper.pieces);
   repivot(keeper, pivot.x, pivot.y);
 
+  // An absorbed cluster ceases to exist, so any tray still listing it would hold a dead
+  // id and mis-pack for ever after.
+  const trayId = state.trayOfCluster.get(absorbedId);
+  if (trayId !== undefined) {
+    const tray = state.trays.get(trayId);
+    if (tray) tray.clusters = tray.clusters.filter((id) => id !== absorbedId);
+    state.trayOfCluster.delete(absorbedId);
+  }
+
   state.clusters.delete(absorbedId);
   const zi = state.zOrder.indexOf(absorbedId);
   if (zi >= 0) state.zOrder.splice(zi, 1);
@@ -273,6 +291,11 @@ export function findSnap(state: PuzzleState, clusterId: number): number | null {
   const cluster = state.clusters.get(clusterId);
   if (!cluster) return null;
 
+  // Pieces sitting in a tray do not connect. Packing puts unrelated pieces side by side,
+  // and two neighbours that happened to land next to each other would silently join --
+  // which both surprises the player and drags an assembly out of the tray's layout.
+  if (state.trayOfCluster.has(clusterId)) return null;
+
   const { geometry, settings } = state;
   const tol = settings.snapTolerance * Math.min(geometry.cellWidth, geometry.cellHeight);
   const tolSq = tol * tol;
@@ -287,6 +310,7 @@ export function findSnap(state: PuzzleState, clusterId: number): number | null {
       if (neighbourId < 0) continue;
       const otherId = state.clusterOfPiece[neighbourId]!;
       if (otherId === clusterId) continue;
+      if (state.trayOfCluster.has(otherId)) continue;
       const other = state.clusters.get(otherId);
       if (!other) continue;
 

@@ -87,6 +87,32 @@ export interface Cluster {
   name: string | null;
 }
 
+/**
+ * A named holding area for loose pieces — the digital equivalent of tipping the sky
+ * pieces into a box lid.
+ *
+ * A tray holds *clusters*, not pieces, so a group you have already joined can be parked
+ * without coming apart. It is deliberately not itself a cluster: a cluster is rigid at
+ * its members' solved offsets, whereas a tray packs unrelated pieces into a tidy grid
+ * with no relationship to where they belong in the picture.
+ *
+ * Collapsing is the point of the feature. On a 2560px monitor, 500 pieces at a legible
+ * size cover most of the screen, so tidying them is not enough — a collapsed tray stops
+ * rendering and hit-testing its contents entirely, turning fifty pieces into one tile.
+ */
+export interface Tray {
+  id: number;
+  name: string;
+  /** World position of the tray's top-left corner, including its header. */
+  x: number;
+  y: number;
+  collapsed: boolean;
+  /** Cluster ids held, in packing order. */
+  clusters: number[];
+  /** Target inner width in world units; packing wraps to this. */
+  width: number;
+}
+
 export interface Viewport {
   /** World coordinate at the centre of the screen. */
   x: number;

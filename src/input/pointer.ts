@@ -34,11 +34,12 @@ import {
   bringToFront,
   type PuzzleState,
 } from '../engine/puzzle.js';
+import { addToTray, moveTray, removeFromTray, trayAt } from '../engine/trays.js';
 import type { Point, Viewport } from '../engine/types.js';
 import type { Renderer } from '../render/renderer.js';
 import { screenToWorld, zoomAbout } from '../render/viewport.js';
 
-type Mode = 'idle' | 'drag' | 'twist' | 'pan' | 'band' | 'pinch';
+type Mode = 'idle' | 'drag' | 'twist' | 'pan' | 'band' | 'pinch' | 'tray';
 export type Tool = 'move' | 'select';
 
 /** Movement below this many screen pixels counts as a tap, not a drag. */
@@ -54,6 +55,9 @@ export interface PointerCallbacks {
   onChange(): void;
   onSelectionChange?(): void;
   onDrop?(result: { clusterIds: number[]; merges: number }): void;
+  onTrayChange?(): void;
+  /** A tray header was tapped without dragging — the app opens its rename editor. */
+  onTrayActivate?(trayId: number): void;
 }
 
 interface Tracked {
@@ -76,6 +80,8 @@ export class PointerInput {
   private pinchDistance = 0;
   private pinchMid: Point = { x: 0, y: 0 };
   private twistAngle = 0;
+  private dragTrayId: number | null = null;
+  private trayWasHeaderTap = false;
   private detach: Array<() => void> = [];
 
   constructor(
@@ -185,6 +191,19 @@ export class PointerInput {
     const hit = this.renderer.hitTest(state, world);
     const bandGesture = this.cb.getTool() === 'select' || e.shiftKey;
 
+    // A tray header beats anything under it: it is the handle for moving the tray, and
+    // for a collapsed tray it is the only thing there.
+    const trayHit = this.renderer.trayHitTest(state, world);
+    if (trayHit && (trayHit.onHeader || (!hit && !bandGesture))) {
+      this.mode = 'tray';
+      this.dragTrayId = trayHit.tray.id;
+      this.trayWasHeaderTap = trayHit.onHeader;
+      this.lastWorld = world;
+      this.renderer.selectedTray = trayHit.tray.id;
+      this.cb.onChange();
+      return;
+    }
+
     if (hit && e.button !== 1) {
       if (e.shiftKey) {
         // Shift-click toggles one cluster in and out of the selection.
@@ -245,10 +264,21 @@ export class PointerInput {
         if (this.pointers.size >= 2) this.updatePinch();
         break;
 
+      case 'tray': {
+        if (this.dragTrayId === null) break;
+        const world = this.toWorld(p);
+        moveTray(state, this.dragTrayId, world.x - this.lastWorld.x, world.y - this.lastWorld.y);
+        this.lastWorld = world;
+        break;
+      }
+
       case 'drag': {
         const world = this.toWorld(p);
         moveClusters(state, this.dragging, world.x - this.lastWorld.x, world.y - this.lastWorld.y);
         this.lastWorld = world;
+        // Highlight the tray the pieces would land in if released here.
+        const over = trayAt(state, world);
+        this.renderer.selectedTray = over ? over.id : null;
         break;
       }
 
@@ -322,12 +352,20 @@ export class PointerInput {
       // A tap on empty board clears the selection.
       this.cb.selection.clear();
       this.cb.onSelectionChange?.();
+    } else if (this.mode === 'tray' && state) {
+      // A header tap that never became a drag is a request to rename or collapse.
+      if (this.trayWasHeaderTap && !this.movedFar && this.dragTrayId !== null) {
+        this.cb.onTrayActivate?.(this.dragTrayId);
+      }
+      this.dragTrayId = null;
+      this.cb.onTrayChange?.();
     } else if (this.mode === 'drag' || this.mode === 'twist') {
       this.finishDrag();
     }
 
     this.mode = 'idle';
     this.renderer.highlightClusters = null;
+    this.renderer.selectedTray = null;
     this.cb.onChange();
   }
 
@@ -336,6 +374,21 @@ export class PointerInput {
     if (!state || this.dragging.length === 0) return;
 
     if (this.rotationAllowed()) quantiseClusterRotations(state, this.dragging);
+
+    // Where the pieces were let go decides whether they join a tray, leave one, or
+    // simply land on the board.
+    const target = trayAt(state, this.lastWorld);
+    if (target) {
+      addToTray(state, target.id, this.dragging);
+      this.dragging = [];
+      this.renderer.highlightClusters = null;
+      this.cb.onTrayChange?.();
+      this.cb.onDrop?.({ clusterIds: [], merges: 0 });
+      return;
+    }
+    // Dropped on open board: anything that came out of a tray is now free, and free
+    // pieces snap as usual.
+    removeFromTray(state, this.dragging);
 
     const result = releaseClusters(state, this.dragging);
     // Merges retire cluster ids, so a stale selection would point at nothing.
@@ -347,6 +400,7 @@ export class PointerInput {
     }
     this.dragging = [];
     this.renderer.highlightClusters = null;
+    this.cb.onTrayChange?.();
     this.cb.onDrop?.(result);
   }
 

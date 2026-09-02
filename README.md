@@ -57,6 +57,32 @@ toolbar readout turns amber when pieces drop below about 34 px. Note that above 
 55–65 px per piece, 500 pieces cover most of any monitor, so seeing them all at once and
 seeing them clearly are genuinely in tension; `ARCHITECTURE.md` §12 has the arithmetic.
 
+## Trays
+
+A tray is a named holding area — the digital equivalent of tipping the sky pieces into a
+box lid. Select some pieces and press **New tray** (or `T`); type a name straight into the
+editor that appears over its title bar.
+
+| | |
+|---|---|
+| put pieces in | drag them onto the tray, or select and press **New tray** |
+| take pieces out | drag them off onto open board |
+| move the tray | drag its title bar |
+| rename | click its title bar |
+| collapse / expand | the **Collapse** button, with the tray selected |
+| find one | the tray dropdown jumps to it |
+| get rid of it | **Empty** — the tray goes, the pieces stay on the board |
+
+**Collapsing is the point.** A collapsed tray stops drawing *and* hit-testing its contents,
+so fifty pieces become one small tile. That is what buys back screen space; simply tidying
+pieces into a grid would not, because the arithmetic in `ARCHITECTURE.md` §12 says 500
+legible pieces cannot fit on a monitor at once however neatly they are arranged.
+
+Pieces sitting in a tray do not snap to each other, and nothing on the board snaps to
+them. Packing puts unrelated pieces side by side, so two neighbours that happened to land
+next to each other would otherwise join silently and drag an assembly out of the layout.
+Take a piece out and it snaps normally again.
+
 Rotation is off by default — tick **Rotation** to turn it on. New puzzles then start with
 pieces at random quarter turns. Free twisting is quantised to the nearest quarter turn on
 release, because an arbitrary angle can never satisfy the snap test and would leave a

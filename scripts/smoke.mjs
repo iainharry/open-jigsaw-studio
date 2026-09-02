@@ -177,6 +177,10 @@ const multi = await page.evaluate(async (fireSrc) => {
   });
 
   const ids = [...app.selection];
+  // Pieces overlap in a dense scatter and hit testing correctly returns the topmost.
+  // Raise the one we intend to grab, or this test measures overlap rather than dragging.
+  const zi = state.zOrder.indexOf(ids[0]);
+  if (zi >= 0) { state.zOrder.splice(zi, 1); state.zOrder.push(ids[0]); }
   const pieceIds = ids.flatMap((id) => state.clusters.get(id).pieces);
   const origin = (pid) => {
     const c = state.clusters.get(state.clusterOfPiece[pid]);
@@ -189,7 +193,7 @@ const multi = await page.evaluate(async (fireSrc) => {
   };
 
   const before = new Map(pieceIds.map((pid) => [pid, origin(pid)]));
-  const grabPiece = pieceIds[0];
+  const grabPiece = state.clusters.get(ids[0]).pieces[0];
   const gp = state.geometry.pieces[grabPiece];
   const grab = toScreen({
     x: before.get(grabPiece).x + gp.bounds.w / 2,
@@ -343,6 +347,148 @@ check('zoom readout shows a percentage', /^\d+%$/.test(readout.trim()), readout)
 await page.selectOption('.pieces', '50');
 await page.waitForFunction(() => globalThis.__ojs.session.state.geometry.pieces.length < 100, null, { timeout: 60_000 });
 
+// 4c. Trays: create from a selection, collapse to reclaim screen space, drag pieces in
+//     and out, rename, and survive a reload.
+await page.click('.tool'); // Select mode: a bare drag in Move mode pans instead
+await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const c = document.querySelector('.board');
+  const r = c.getBoundingClientRect();
+  // Lasso the whole visible board. The app now opens zoomed to the board, so a
+  // narrow lasso catches only a piece or two and makes for a weak test.
+  fireEv(c, 'pointerdown', r.left + 10, r.top + 10);
+  for (let i = 1; i <= 10; i++) {
+    fireEv(c, 'pointermove', r.left + 10 + ((r.width - 20) * i) / 10, r.top + 10 + ((r.height - 20) * i) / 10);
+    await new Promise((z) => requestAnimationFrame(z));
+  }
+  fireEv(c, 'pointerup', r.left + r.width - 10, r.top + r.height - 10);
+}, fire);
+
+await page.click('.tool'); // back to Move mode
+const beforeTray = await page.evaluate(() => globalThis.__ojs.selection.size);
+check('lasso for the tray selected something', beforeTray >= 3, `${beforeTray} clusters`);
+await page.click('[data-act="new-tray"]');
+await page.waitForTimeout(300);
+
+const trayMade = await page.evaluate(() => {
+  const s = globalThis.__ojs.session.state;
+  const tray = [...s.trays.values()][0];
+  return {
+    trays: s.trays.size,
+    held: tray ? tray.clusters.length : 0,
+    inTray: tray ? tray.clusters.every((id) => s.trayOfCluster.get(id) === tray.id) : false,
+    selection: globalThis.__ojs.selection.size,
+  };
+});
+check('New tray takes the selection', trayMade.trays === 1 && trayMade.held === beforeTray && beforeTray >= 3, `${trayMade.held} of ${beforeTray} clusters`);
+check('tray membership is recorded', trayMade.inTray);
+check('creating a tray clears the selection', trayMade.selection === 0);
+
+// The rename editor opens over the tray; type a name and commit.
+await page.fill('.tray-rename', 'Blue sky');
+await page.press('.tray-rename', 'Enter');
+await page.waitForTimeout(200);
+const trayName = await page.evaluate(() => [...globalThis.__ojs.session.state.trays.values()][0].name);
+check('a tray can be renamed in place', trayName === 'Blue sky', trayName);
+
+// Collapsing must actually stop drawing the contents — that is the point of the feature.
+const drawnOpen = await page.evaluate(async () => {
+  globalThis.__ojs.dirty = true;
+  await new Promise((r) => requestAnimationFrame(r));
+  return globalThis.__ojs.renderer.stats.piecesDrawn;
+});
+await page.click('[data-act="collapse-tray"]');
+await page.waitForTimeout(250);
+const collapsed = await page.evaluate(async () => {
+  globalThis.__ojs.dirty = true;
+  await new Promise((r) => requestAnimationFrame(r));
+  const s = globalThis.__ojs.session.state;
+  const tray = [...s.trays.values()][0];
+  return { drawn: globalThis.__ojs.renderer.stats.piecesDrawn, collapsed: tray.collapsed };
+});
+check('collapsing a tray hides its pieces from the board', collapsed.collapsed && collapsed.drawn < drawnOpen, `${drawnOpen} -> ${collapsed.drawn} drawn`);
+
+// A collapsed tray's pieces must not be grabbable either.
+const grabHidden = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  const s = app.session.state;
+  const tray = [...s.trays.values()][0];
+  if (!tray || tray.clusters.length === 0) return 'empty tray';
+  const cluster = s.clusters.get(tray.clusters[0]);
+  const piece = s.geometry.pieces[cluster.pieces[0]];
+  const at = { x: cluster.x + (piece.solved.x - cluster.pivotX) + piece.bounds.w / 2, y: cluster.y + (piece.solved.y - cluster.pivotY) + piece.bounds.h / 2 };
+  return app.renderer.hitTest(s, at) !== null;
+});
+check('pieces in a collapsed tray cannot be grabbed', grabHidden === false);
+
+await page.click('[data-act="collapse-tray"]');
+await page.waitForTimeout(250);
+
+// Drag a loose piece onto the tray and confirm it joins.
+const dropped = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const s = app.session.state;
+  const c = document.querySelector('.board');
+  const r = c.getBoundingClientRect();
+  const vp = () => app.viewport;
+  const toScreen = (p) => ({ x: (p.x - vp().x) * vp().zoom + r.width / 2 + r.left, y: (p.y - vp().y) * vp().zoom + r.height / 2 + r.top });
+
+  const tray = [...s.trays.values()][0];
+  const free = [...s.clusters.keys()].find((id) => !s.trayOfCluster.has(id));
+  const cluster = s.clusters.get(free);
+  const piece = s.geometry.pieces[cluster.pieces[0]];
+  // Raise it so the hit test finds this piece and not one lying on top.
+  const zi = s.zOrder.indexOf(cluster.id);
+  if (zi >= 0) { s.zOrder.splice(zi, 1); s.zOrder.push(cluster.id); }
+
+  const from = toScreen({ x: cluster.x + (piece.solved.x - cluster.pivotX) + piece.bounds.w / 2, y: cluster.y + (piece.solved.y - cluster.pivotY) + piece.bounds.h / 2 });
+  const to = toScreen({ x: tray.x + tray.width / 2, y: tray.y + 10 });
+
+  fireEv(c, 'pointerdown', from.x, from.y);
+  for (let i = 1; i <= 10; i++) {
+    fireEv(c, 'pointermove', from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
+    await new Promise((z) => requestAnimationFrame(z));
+  }
+  fireEv(c, 'pointerup', to.x, to.y);
+  return { joined: s.trayOfCluster.get(free) === tray.id, held: tray.clusters.length, id: free };
+}, fire);
+check('dragging a piece onto a tray puts it in', dropped.joined, `tray now holds ${dropped.held} clusters`);
+
+// And dragging one back out frees it.
+const pulled = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const s = app.session.state;
+  const c = document.querySelector('.board');
+  const r = c.getBoundingClientRect();
+  const vp = () => app.viewport;
+  const toScreen = (p) => ({ x: (p.x - vp().x) * vp().zoom + r.width / 2 + r.left, y: (p.y - vp().y) * vp().zoom + r.height / 2 + r.top });
+
+  const tray = [...s.trays.values()][0];
+  const id = tray.clusters[0];
+  const cluster = s.clusters.get(id);
+  const piece = s.geometry.pieces[cluster.pieces[0]];
+  const zi = s.zOrder.indexOf(cluster.id);
+  if (zi >= 0) { s.zOrder.splice(zi, 1); s.zOrder.push(cluster.id); }
+
+  const from = toScreen({ x: cluster.x + (piece.solved.x - cluster.pivotX) + piece.bounds.w / 2, y: cluster.y + (piece.solved.y - cluster.pivotY) + piece.bounds.h / 2 });
+  // Somewhere well clear of the tray.
+  const to = { x: r.left + r.width - 60, y: r.top + 60 };
+
+  fireEv(c, 'pointerdown', from.x, from.y);
+  for (let i = 1; i <= 10; i++) {
+    fireEv(c, 'pointermove', from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
+    await new Promise((z) => requestAnimationFrame(z));
+  }
+  fireEv(c, 'pointerup', to.x, to.y);
+  return { free: !s.trayOfCluster.has(id), held: tray.clusters.length };
+}, fire);
+check('dragging a piece out of a tray frees it', pulled.free, `tray now holds ${pulled.held} clusters`);
+
+const trayListed = await page.evaluate(() => [...document.querySelector('.tray-list').options].map((o) => o.textContent));
+check('the tray appears in the tray list', trayListed.some((t) => t.includes('Blue sky')), trayListed.join(' | '));
+
 // 5. Renaming a puzzle.
 await page.fill('.title', 'Great Ocean Road');
 await page.dispatchEvent('.title', 'change');
@@ -378,6 +524,16 @@ const afterReload = await page.evaluate(() => ({
 }));
 check('progress survives a page reload', afterReload.clusters === restored, `${restored} -> ${afterReload.clusters} clusters`);
 check('the new name survives a page reload', afterReload.title === 'Great Ocean Road', afterReload.title);
+
+const traysAfterReload = await page.evaluate(() => {
+  const s = globalThis.__ojs.session.state;
+  const tray = [...s.trays.values()][0];
+  return tray
+    ? { name: tray.name, held: tray.clusters.length, mapped: tray.clusters.every((id) => s.trayOfCluster.get(id) === tray.id) }
+    : null;
+});
+check('trays survive a page reload', traysAfterReload !== null && traysAfterReload.name === 'Blue sky' && traysAfterReload.held > 0, traysAfterReload ? `“${traysAfterReload.name}” with ${traysAfterReload.held} clusters` : 'no trays');
+check('tray membership is rebuilt on load', traysAfterReload?.mapped === true);
 
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');

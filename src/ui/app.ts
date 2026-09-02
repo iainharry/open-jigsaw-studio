@@ -20,6 +20,14 @@ import {
   scatter,
   serialize,
   stateFromGeometry,
+  createTray,
+  defaultTrayWidth,
+  deleteTray,
+  renameTray,
+  setTrayCollapsed,
+  trayBounds,
+  trayMetrics,
+  trayPieceCount,
   DEFAULT_SETTINGS,
   type GeometryOptions,
   type PuzzleState,
@@ -27,7 +35,7 @@ import {
 } from '../engine/index.js';
 import { PointerInput, type Tool } from '../input/pointer.js';
 import { Renderer } from '../render/renderer.js';
-import { fitTo, zoomAbout } from '../render/viewport.js';
+import { fitTo, screenToWorld, worldToScreen, zoomAbout } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
 import {
   deletePuzzle,
@@ -101,7 +109,12 @@ export class App {
     library: HTMLElement;
     libList: HTMLElement;
     zoomReadout: HTMLElement;
+    trayList: HTMLSelectElement;
+    trayRename: HTMLInputElement;
   };
+
+  /** Tray the toolbar acts on. Set by tapping a tray or creating one. */
+  private activeTray: number | null = null;
 
   /** Cluster ids the player has selected. Interaction state, never saved. */
   private readonly selection = new Set<number>();
@@ -133,6 +146,15 @@ export class App {
       onDrop: (result) => {
         if (result.merges > 0) void this.save();
         this.updateStatus();
+      },
+      onTrayChange: () => {
+        this.refreshTrayUi();
+        void this.save();
+      },
+      onTrayActivate: (trayId) => {
+        this.activeTray = trayId;
+        this.refreshTrayUi();
+        this.beginTrayRename(trayId);
       },
     });
     this.renderer.selection = this.selection;
@@ -205,6 +227,13 @@ export class App {
           </label>
           <span class="divider"></span>
           <span class="group">
+            <button class="btn" data-act="new-tray" title="Put the selected pieces in a new tray (T)">New tray</button>
+            <select class="tray-list" title="Jump to a tray"><option value="">Trays…</option></select>
+            <button class="btn tray-only" data-act="collapse-tray" title="Collapse or expand the selected tray">Collapse</button>
+            <button class="btn tray-only" data-act="empty-tray" title="Tip the tray out onto the board and remove it">Empty</button>
+          </span>
+          <span class="divider"></span>
+          <span class="group">
             <button class="btn tool" data-act="tool" title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
             <label class="field">
               <input type="checkbox" class="rotate-on" /> Rotation
@@ -217,6 +246,7 @@ export class App {
         </header>
         <main class="stage" data-ref="off">
           <canvas class="board"></canvas>
+          <input class="tray-rename" type="text" hidden maxlength="40" />
           <div class="splitter" title="Drag to resize the reference image"></div>
           <aside class="reference">
             <div class="ref-head">Reference</div>
@@ -253,6 +283,8 @@ export class App {
       library: q<HTMLElement>('.library'),
       libList: q<HTMLElement>('.lib-list'),
       zoomReadout: q<HTMLElement>('.zoom-readout'),
+      trayList: q<HTMLSelectElement>('.tray-list'),
+      trayRename: q<HTMLInputElement>('.tray-rename'),
     };
 
     for (const n of PIECE_CHOICES) {
@@ -274,6 +306,9 @@ export class App {
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
+      else if (act === 'new-tray') this.newTray();
+      else if (act === 'collapse-tray') this.toggleActiveTray();
+      else if (act === 'empty-tray') this.emptyActiveTray();
       else if (act === 'rotl') this.input.rotateSelection(-Math.PI / 2);
       else if (act === 'rotr') this.input.rotateSelection(Math.PI / 2);
     });
@@ -323,9 +358,22 @@ export class App {
       else if (e.key === '-' || e.key === '_') this.zoomBy(1 / 1.25);
       else if (e.key === '0') this.fitBoard();
       else if (e.key === '9') this.fitAll();
+      else if (e.key === 't' || e.key === 'T') this.newTray();
       else return;
       e.preventDefault();
     });
+
+    this.els.trayList.addEventListener('change', () => {
+      const value = this.els.trayList.value;
+      if (value) this.jumpToTray(Number(value));
+    });
+
+    this.els.trayRename.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.commitTrayRename(true);
+      else if (e.key === 'Escape') this.commitTrayRename(false);
+      e.stopPropagation();
+    });
+    this.els.trayRename.addEventListener('blur', () => this.commitTrayRename(true));
 
     this.els.library.addEventListener('click', (e) => {
       // Clicking the dimmed backdrop closes the library.
@@ -434,7 +482,9 @@ export class App {
     this.renderer.invalidateGeometry();
     this.renderer.setImage(image, image.width, image.height);
     this.els.title.value = title;
+    this.activeTray = null;
     this.updateRotationUi();
+    this.refreshTrayUi();
     this.drawReference();
     this.fitBoard();
     this.playingSince = performance.now();
@@ -486,7 +536,9 @@ export class App {
       ),
     );
     this.clearSelection();
+    this.activeTray = null;
     this.updateRotationUi();
+    this.refreshTrayUi();
     // Records written before thumbnails existed get one now, so the library is not
     // permanently full of blank cards for older puzzles.
     if (!record.thumbnail) {
@@ -716,6 +768,183 @@ export class App {
     el.style.width = `${width}px`;
     el.style.height = `${height}px`;
     el.getContext('2d')?.drawImage(image, 0, 0, width, height);
+  }
+
+  // --- Trays ----------------------------------------------------------------
+
+  /**
+   * Make a tray from whatever is selected, placed clear of the board.
+   *
+   * Created empty when nothing is selected, so a player can set up "sky", "edges" and
+   * "buildings" before sorting anything into them — which is how people actually work.
+   */
+  private newTray(): void {
+    if (!this.session) return;
+    const state = this.session.state;
+    const ids = [...this.selection].filter((id) => state.clusters.has(id));
+
+    const spot = this.findTraySpot(state);
+    const tray = createTray(state, { x: spot.x, y: spot.y, clusters: ids });
+
+    this.activeTray = tray.id;
+    this.clearSelection();
+    this.refreshTrayUi();
+    this.dirty = true;
+    this.setStatus(
+      ids.length > 0
+        ? `“${tray.name}” holds ${trayPieceCount(state, tray)} pieces. Click its title to rename.`
+        : `“${tray.name}” created. Drag pieces onto it, or click its title to rename.`,
+    );
+    this.beginTrayRename(tray.id);
+    void this.save();
+  }
+
+  /**
+   * Where to put a new tray.
+   *
+   * Down the left of whatever the player is looking at, rather than at the centre of the
+   * view: a tray dropped in the middle covers the board, which is the one place it must
+   * not be. Existing trays are stepped over so a second tray does not land on the first.
+   */
+  private findTraySpot(state: PuzzleState): { x: number; y: number } {
+    const size = this.renderer.size;
+    const view = {
+      tl: screenToWorld(this.viewport, size, { x: 0, y: 0 }),
+      br: screenToWorld(this.viewport, size, { x: size.width, y: size.height }),
+    };
+    const width = defaultTrayWidth(state);
+    const gap = trayMetrics(state).header * 0.5;
+
+    let x = view.tl.x + (view.br.x - view.tl.x) * 0.03;
+    const y0 = view.tl.y + (view.br.y - view.tl.y) * 0.05;
+    let y = y0;
+
+    // Step past anything already occupying the column, then wrap to a second column.
+    for (let guard = 0; guard < 40; guard++) {
+      let clash = false;
+      for (const other of state.trays.values()) {
+        const b = trayBounds(state, other);
+        const overlaps =
+          x < b.x + b.w + gap && x + width + gap > b.x && y < b.y + b.h + gap && y + gap > b.y - b.h;
+        if (overlaps) {
+          y = b.y + b.h + gap;
+          clash = true;
+          break;
+        }
+      }
+      if (!clash) break;
+      if (y > view.br.y) {
+        y = y0;
+        x += width + gap;
+      }
+    }
+    return { x, y };
+  }
+
+  private toggleActiveTray(): void {
+    if (!this.session || this.activeTray === null) return;
+    const tray = this.session.state.trays.get(this.activeTray);
+    if (!tray) return;
+    setTrayCollapsed(this.session.state, tray.id, !tray.collapsed);
+    this.refreshTrayUi();
+    this.dirty = true;
+    void this.save();
+  }
+
+  private emptyActiveTray(): void {
+    if (!this.session || this.activeTray === null) return;
+    const state = this.session.state;
+    const tray = state.trays.get(this.activeTray);
+    if (!tray) return;
+    const n = trayPieceCount(state, tray);
+    deleteTray(state, tray.id);
+    this.activeTray = null;
+    this.refreshTrayUi();
+    this.dirty = true;
+    this.setStatus(`Tray removed. ${n} piece${n === 1 ? '' : 's'} left on the board.`);
+    void this.save();
+  }
+
+  private refreshTrayUi(): void {
+    const state = this.session?.state;
+    const trays = state ? [...state.trays.values()] : [];
+
+    if (this.activeTray !== null && !state?.trays.has(this.activeTray)) this.activeTray = null;
+    this.renderer.selectedTray = this.activeTray;
+
+    const list = this.els.trayList;
+    const previous = this.activeTray === null ? '' : String(this.activeTray);
+    list.innerHTML = '';
+    const head = document.createElement('option');
+    head.value = '';
+    head.textContent = trays.length === 0 ? 'No trays' : `Trays (${trays.length})`;
+    list.append(head);
+    for (const tray of trays) {
+      const opt = document.createElement('option');
+      opt.value = String(tray.id);
+      // textContent, not innerHTML: tray names are user input.
+      opt.textContent = `${tray.name} · ${trayPieceCount(state!, tray)}`;
+      list.append(opt);
+    }
+    list.value = previous;
+    list.disabled = trays.length === 0;
+
+    const active = this.activeTray === null ? null : (state?.trays.get(this.activeTray) ?? null);
+    for (const btn of this.root.querySelectorAll<HTMLButtonElement>('.tray-only')) {
+      btn.disabled = active === null;
+    }
+    const collapseBtn = this.root.querySelector<HTMLButtonElement>('[data-act="collapse-tray"]');
+    if (collapseBtn) collapseBtn.textContent = active?.collapsed ? 'Expand' : 'Collapse';
+    this.dirty = true;
+  }
+
+  private jumpToTray(trayId: number): void {
+    if (!this.session) return;
+    const state = this.session.state;
+    const tray = state.trays.get(trayId);
+    if (!tray) return;
+    const b = trayBounds(state, tray);
+    this.activeTray = trayId;
+    this.viewport = { ...this.viewport, x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    this.refreshTrayUi();
+    this.dirty = true;
+  }
+
+  /** Float a text input over the tray's title bar so it can be renamed in place. */
+  private beginTrayRename(trayId: number): void {
+    if (!this.session) return;
+    const state = this.session.state;
+    const tray = state.trays.get(trayId);
+    if (!tray) return;
+
+    const b = trayBounds(state, tray);
+    const { header } = trayMetrics(state);
+    const canvasBox = this.canvas.getBoundingClientRect();
+    const stageBox = this.els.stage.getBoundingClientRect();
+    const tl = worldToScreen(this.viewport, this.renderer.size, { x: b.x, y: b.y });
+
+    const input = this.els.trayRename;
+    input.value = tray.name;
+    input.dataset['trayId'] = String(trayId);
+    input.hidden = false;
+    input.style.left = `${canvasBox.left - stageBox.left + tl.x + 2}px`;
+    input.style.top = `${canvasBox.top - stageBox.top + tl.y + 2}px`;
+    input.style.width = `${Math.max(90, b.w * this.viewport.zoom - 4)}px`;
+    input.style.height = `${Math.max(20, header * this.viewport.zoom - 4)}px`;
+    input.focus();
+    input.select();
+  }
+
+  private commitTrayRename(save: boolean): void {
+    const input = this.els.trayRename;
+    if (input.hidden) return;
+    const trayId = Number(input.dataset['trayId']);
+    input.hidden = true;
+    if (!save || !this.session) return;
+    renameTray(this.session.state, trayId, input.value);
+    this.refreshTrayUi();
+    this.dirty = true;
+    void this.save();
   }
 
   // --- Library --------------------------------------------------------------

@@ -1,7 +1,7 @@
 # Architecture and decision record
 
-Status of this document: covers M1 (a playable puzzle engine). Update it as decisions
-change; do not let it drift.
+Status of this document: covers M1 to M3 (engine, selection, rotation, library, trays).
+Update it as decisions change; do not let it drift.
 
 ## 1. Layers
 
@@ -18,7 +18,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 38 current tests run headless in 1.4 seconds. If engine code ever needs jsdom, the
+All 80 current tests run headless in about 1.4 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -142,7 +142,7 @@ that is close to the line and is worth re-measuring on the actual device.
 
 ## 8. Dependencies and licences
 
-Runtime dependencies: **none.** The built bundle is 28 KB (10 KB gzipped).
+Runtime dependencies: **none.** The built bundle is 54 KB (18 KB gzipped).
 
 | package | role | licence |
 |---|---|---|
@@ -270,15 +270,67 @@ Not built — it is one stutter after a zoom, not a steady-state cost.
 Faster than the fit-all figures in section 7 precisely because fitting the board zooms in
 further, so culling removes more work.
 
-## 13. Known limitations after M2
+## 13. Trays
+
+A tray is a named, movable region that holds **clusters** and packs them into rows.
+
+### Why a tray is not a cluster
+
+The M1 note claimed a named group is "just a cluster with a name". Section 10 already
+corrected that for trays; this is the implementation of the correction. A cluster holds its
+members rigidly at their *solved* offsets, which is exactly right for pieces you have
+joined and exactly wrong for a box of unrelated sky pieces that need packing. So a tray
+owns a list of cluster ids and positions them itself.
+
+It holds clusters rather than pieces so that an assembly you have already joined can be
+parked without coming apart.
+
+### Collapsing is the feature
+
+Section 12's arithmetic says 500 legible pieces cannot share a monitor however neatly they
+are arranged, so tidying alone would not have helped. A collapsed tray is therefore skipped
+in both the draw loop and the hit test — fifty pieces become one tile that neither renders
+nor responds. Expanding re-packs, because while collapsed the pieces were not being drawn
+and the tray may have been dragged elsewhere entirely.
+
+### Rules that stop it being surprising
+
+- **Pieces in a tray do not snap**, to each other or to the board. Packing puts unrelated
+  pieces side by side, so two neighbours landing next to each other would join silently and
+  pull an assembly out of the layout. `findSnap` returns null for a trayed cluster and skips
+  trayed candidates.
+- **A merge removes the absorbed cluster from its tray.** Otherwise the tray holds a dead
+  id and mis-packs for ever after.
+- **Packing preserves insertion order**, not size. Sorting by height would reshuffle the
+  whole tray every time one piece was added, and a player expects to find pieces roughly
+  where they put them.
+- **Shelf packing, not a uniform grid**, because a tray can hold one piece and a
+  twelve-piece assembly side by side and a grid sized to the largest member would waste
+  most of the tray.
+- **Deleting a tray keeps its pieces.** It expands first if collapsed, so they reappear
+  where the tray was rather than at a stale position.
+- **New trays go down the left of the current view**, stepping over existing ones. Centring
+  them would drop a tray on the board, which is the one place it must not be.
+
+### Save format
+
+Trays took the save file to v2. A v1 file loads with no trays, which is what it had.
+Members that no longer exist are dropped on load, so a hand-edited or corrupt file cannot
+leave a tray holding phantom ids.
+
+## 14. Known limitations after M2
 
 - No image crop/rotate before generation. Images are downscaled to 4000 px on the long
   edge and used whole.
 - No puzzle library UI. Multiple puzzles are stored in IndexedDB but only the last one
   reopens.
-- No named-group UI. `nameCluster()` exists and round-trips through save files; nothing
-  calls it yet.
-- No piece trays.
+- No named-group UI for *connected* assemblies. `nameCluster()` exists and round-trips
+  through save files; nothing calls it yet. Trays (section 13) cover the unconnected case.
+- Trays do not scroll. A tray with two hundred pieces grows tall rather than paging, so a
+  very large tray is unwieldy.
+- No automatic sorting into trays (by colour or by edge). Everything is placed by hand,
+  which is deliberate for now: an "edges" filter is easy, colour clustering is not, and
+  neither should be built before the manual case feels right.
 - Selection is not saved. Closing the puzzle loses it, which is correct for a highlight
   but will not be correct once a selection can be named and become a tray.
 - Rotation is quarter turns only. Free angles are supported by the maths but always

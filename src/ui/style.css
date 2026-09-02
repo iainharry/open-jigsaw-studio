@@ -129,6 +129,36 @@ body {
   padding: 4px 10px;
 }
 
+.tray-list {
+  background: #262c35;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 5px 6px;
+  font: inherit;
+  max-width: 18ch;
+}
+
+.tray-list:disabled {
+  opacity: 0.45;
+}
+
+/* Floats over the canvas, on top of a tray's title bar, for renaming in place. */
+.tray-rename {
+  position: absolute;
+  z-index: 5;
+  background: #10141a;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 0 6px;
+  font: 600 13px system-ui, sans-serif;
+}
+
+.tray-rename[hidden] {
+  display: none;
+}
+
 .zoom-readout {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
