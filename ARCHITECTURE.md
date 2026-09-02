@@ -335,7 +335,48 @@ Implementation note worth keeping: help mode has to intercept `pointerdown`, `cl
 the `click` the toolbar listens for, so the button fired anyway — the first version looked
 right and did nothing.
 
-## 15. Known limitations after M2
+## 15. Colour sorting
+
+`Sort by colour` groups the loose clusters and lets the player step through the groups,
+selecting each in turn. Three decisions carry the design.
+
+**It selects, it does not file.** Automatically creating six named trays would be a
+judgement about the picture the algorithm is not entitled to make — "Blues" might be three
+things the player wanted apart, or two they wanted together, and undoing a wrong guess
+costs more than the sort saved. Stepping through costs one extra press per group and keeps
+the decision with the person.
+
+**Grouping happens in OKLab, not RGB.** Euclidean distance in sRGB does not match what the
+eye calls similar; it will put a mid-blue nearer a dark grey than another blue. The whole
+value of a colour sort is that the groups look like groups, so the space has to be
+near-perceptually-uniform. There is a test asserting the blue/grey case specifically.
+
+**k-means is seeded from the puzzle seed.** Sorting twice gives identical groups. A sort
+that reshuffled every press would be unusable when working through groups one at a time.
+Empty clusters are re-seeded on the worst-served point, so asking for six groups does not
+quietly return five.
+
+Sampling (`src/render/pieceColours.ts`) needs a canvas and so sits outside the engine. It
+samples each piece's *nominal cell*, not its bounding box: the bounding box includes tab
+overhang that reaches into the neighbour's part of the picture, which would drag a sky
+piece towards green because of a tab poking into a tree. The image is analysed at 900px on
+the long edge — colour averaging needs no more, and reading a 25-megapixel buffer would
+cost ~100 MB and a visible pause for nothing.
+
+### Frame-time reporting, again
+
+Section 12 changed the footer from last-frame to a median of 60 frames. That was still
+wrong after a change that rebakes: with only a handful of frames since the sort, all of
+them baking, the footer read 28 ms where a measured steady state was 1.3 ms. Frames that
+rasterised anything are now excluded from the median entirely. The spike is real, but it
+happens once, and reporting it as the typical cost was simply false.
+
+Worth recording what that investigation ruled out: selection outlines were the suspect,
+since colour sorting makes 200-piece selections normal where before selections were a
+handful. Measured cost of outlining 211 visible pieces: **0.0 ms**. Stroking cached Path2D
+objects inside an existing transform is free at this scale.
+
+## 16. Known limitations after M2
 
 - No image crop/rotate before generation. Images are downscaled to 4000 px on the long
   edge and used whole.
@@ -345,9 +386,10 @@ right and did nothing.
   through save files; nothing calls it yet. Trays (section 13) cover the unconnected case.
 - Trays do not scroll. A tray with two hundred pieces grows tall rather than paging, so a
   very large tray is unwieldy.
-- No automatic sorting into trays (by colour or by edge). Everything is placed by hand,
-  which is deliberate for now: an "edges" filter is easy, colour clustering is not, and
-  neither should be built before the manual case feels right.
+- Sorting is by colour and by edge only. Sorting by image *region* (sky, foreground,
+  subject) would need segmentation and is not obviously better than colour for the job.
+- Colour groups are computed from a mean per piece, so a piece split evenly between two
+  regions lands between them rather than in either. Honest, but occasionally surprising.
 - Selection is not saved. Closing the puzzle loses it, which is correct for a highlight
   but will not be correct once a selection can be named and become a tray.
 - Rotation is quarter turns only. Free angles are supported by the maths but always

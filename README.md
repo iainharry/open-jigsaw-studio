@@ -75,12 +75,31 @@ editor that appears over its title bar.
 |---|---|
 | put pieces in | drag them onto the tray, or select and press **New tray** |
 | gather the edges | **Edges** selects every border piece; then **New tray** |
+| sort by colour | **Sort by colour**, then step through the groups |
 | take pieces out | drag them off onto open board |
 | move the tray | drag its title bar |
 | rename | click its title bar |
 | collapse / expand | the **Collapse** button, with the tray selected |
 | find one | the tray dropdown jumps to it |
 | get rid of it | **Empty** — the tray goes, the pieces stay on the board |
+
+### Sorting
+
+Two buttons do the tedious part of a large puzzle.
+
+**Edges** selects every border and corner piece in one press — the first move in solving
+any real puzzle.
+
+**Sort by colour** groups the loose pieces and then steps you through the groups one at a
+time, each one selected with a swatch of its colour and a piece count. Press **New tray**
+to keep a group (it files them and moves straight to the next), or the arrow to skip. The
+**Groups** control re-sorts into more or fewer.
+
+It deliberately does *not* create trays for you. The clustering can tell that these pieces
+are similar; it cannot know whether you wanted sky and sea together or apart, and guessing
+wrong makes more work than it saves. Grouping happens in OKLab rather than RGB, so
+"similar" means similar to the eye, and it is seeded — sorting the same puzzle twice gives
+the same groups.
 
 **Collapsing is the point.** A collapsed tray stops drawing *and* hit-testing its contents,
 so fifty pieces become one small tile. That is what buys back screen space; simply tidying

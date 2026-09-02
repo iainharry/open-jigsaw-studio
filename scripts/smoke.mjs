@@ -538,6 +538,67 @@ const missing = await page.evaluate(() =>
 );
 check('every toolbar control carries help text', missing.length === 0, missing.join(', ') || 'all covered');
 
+// 4e. Colour sorting: groups the loose pieces and steps through them.
+await page.click('[data-act="colour-sort"]');
+await page.waitForTimeout(500);
+const sortStart = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  return {
+    navVisible: !document.querySelector('.colour-nav').hidden,
+    groups: app.colourGroups ? app.colourGroups.length : 0,
+    selected: app.selection.size,
+    label: document.querySelector('.colour-label').textContent,
+    swatch: document.querySelector('.swatch').style.background,
+    covered: app.colourGroups
+      ? app.colourGroups.reduce((n, g) => n + g.clusterIds.length, 0)
+      : 0,
+    free: [...app.session.state.clusters.keys()].filter((id) => !app.session.state.trayOfCluster.has(id)).length,
+  };
+});
+check('colour sort produces groups', sortStart.groups >= 2, `${sortStart.groups} groups`);
+check('the first group is selected for you', sortStart.selected > 0, `${sortStart.selected} clusters`);
+check('the stepper appears with a swatch and a count', sortStart.navVisible && /\d+\/\d+/.test(sortStart.label) && sortStart.swatch.length > 0, sortStart.label);
+check('every loose cluster lands in some group', sortStart.covered === sortStart.free, `${sortStart.covered} of ${sortStart.free}`);
+
+const stepped = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const first = [...app.selection].sort().join(',');
+  document.querySelector('[data-act="colour-next"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  const second = [...app.selection].sort().join(',');
+  document.querySelector('[data-act="colour-prev"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  return { changed: first !== second, backAgain: [...app.selection].sort().join(',') === first };
+});
+check('stepping shows a different group', stepped.changed);
+check('stepping back returns to the first group', stepped.backAgain);
+
+// Sorting is deterministic: the same puzzle re-sorts identically.
+const repeatable = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const before = app.colourGroups.map((g) => g.clusterIds.join(','));
+  document.querySelector('[data-act="colour-sort"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  const after = app.colourGroups.map((g) => g.clusterIds.join(','));
+  return before.join('|') === after.join('|');
+});
+check('re-sorting the same puzzle gives the same groups', repeatable);
+
+// Filing a group should tray it and advance automatically.
+const filed = await page.evaluate(() => ({ index: globalThis.__ojs.colourIndex, trays: globalThis.__ojs.session.state.trays.size }));
+await page.click('[data-act="new-tray"]');
+await page.waitForTimeout(250);
+await page.fill('.tray-rename', 'Colour group');
+await page.press('.tray-rename', 'Enter');
+await page.waitForTimeout(350);
+const afterFiled = await page.evaluate(() => ({ index: globalThis.__ojs.colourIndex, trays: globalThis.__ojs.session.state.trays.size }));
+check('New tray files the colour group', afterFiled.trays === filed.trays + 1, `${filed.trays} -> ${afterFiled.trays} trays`);
+check('and advances to the next group', afterFiled.index !== filed.index, `group ${filed.index + 1} -> ${afterFiled.index + 1}`);
+
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+check('Escape ends colour sorting', await page.evaluate(() => globalThis.__ojs.colourGroups === null));
+
 // 5. Renaming a puzzle.
 await page.fill('.title', 'Great Ocean Road');
 await page.dispatchEvent('.title', 'change');

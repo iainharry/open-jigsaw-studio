@@ -455,3 +455,25 @@ body {
 .ojs {
   position: relative;
 }
+
+/* Colour-group stepper, shown only while sorting. */
+.colour-nav[hidden] {
+  display: none;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  display: inline-block;
+  flex: none;
+}
+
+.colour-label {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  min-width: 12ch;
+  text-align: center;
+}

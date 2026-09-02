@@ -125,6 +125,7 @@ export class Renderer {
 
   draw(state: PuzzleState, vp: Viewport): void {
     const t0 = performance.now();
+    const bakesBefore = this.bakeCache.bakeCount;
     const { ctx } = this;
     const size = this.size;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -250,10 +251,20 @@ export class Renderer {
     const elapsed = performance.now() - t0;
     this.stats.lastFrameMs = elapsed;
 
-    this.recentFrames.push(elapsed);
-    if (this.recentFrames.length > 60) this.recentFrames.shift();
-    const sorted = [...this.recentFrames].sort((a, b) => a - b);
-    this.stats.medianFrameMs = sorted[sorted.length >> 1] ?? elapsed;
+    // Only frames that rasterised nothing count towards the reported median. A frame that
+    // baked two hundred pieces after a zoom or a new picture costs tens of milliseconds and
+    // is entirely unrepresentative -- reporting it made the footer claim 28ms where the
+    // steady state measures 1.3ms. The spike is real but it happens once, not every frame.
+    if (this.bakeCache.bakeCount === bakesBefore) {
+      this.recentFrames.push(elapsed);
+      if (this.recentFrames.length > 60) this.recentFrames.shift();
+    }
+    if (this.recentFrames.length > 0) {
+      const sorted = [...this.recentFrames].sort((a, b) => a - b);
+      this.stats.medianFrameMs = sorted[sorted.length >> 1]!;
+    } else {
+      this.stats.medianFrameMs = elapsed;
+    }
   }
 
   private drawTrays(state: PuzzleState, vp: Viewport, size: ScreenSize): void {

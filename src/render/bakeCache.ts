@@ -69,6 +69,8 @@ export class BakeCache {
   readonly maxScale: number;
   private readonly bevel: boolean;
   private bytes = 0;
+  /** Bakes performed, so the renderer can tell a one-off rasterising frame from a normal one. */
+  bakeCount = 0;
   private source: CanvasImageSource | null = null;
   private sourceWidth = 0;
   private sourceHeight = 0;
@@ -111,6 +113,7 @@ export class BakeCache {
     }
     const baked = this.bake(piece, scale);
     if (!baked) return null;
+    this.bakeCount++;
     this.entries.set(key, baked);
     this.bytes += baked.bytes;
     this.evictIfNeeded(key);

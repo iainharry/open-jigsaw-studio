@@ -13,6 +13,10 @@ import {
   deserialize,
   edgeClusters,
   generateGeometry,
+  groupByColour,
+  liveMembers,
+  oklabToRgb,
+  type ColourGroup,
   isComplete,
   pieceCountLimits,
   pieceEdgePixels,
@@ -36,6 +40,7 @@ import {
 } from '../engine/index.js';
 import { PointerInput, type Tool } from '../input/pointer.js';
 import { Renderer } from '../render/renderer.js';
+import { samplePieceColours } from '../render/pieceColours.js';
 import { fitTo, screenToWorld, worldToScreen, zoomAbout } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
 import {
@@ -113,7 +118,17 @@ export class App {
     trayList: HTMLSelectElement;
     trayRename: HTMLInputElement;
     tip: HTMLElement;
+    colourNav: HTMLElement;
+    colourLabel: HTMLElement;
+    colourCount: HTMLSelectElement;
+    swatch: HTMLElement;
   };
+
+  /** Colour groups being stepped through, and where we are in them. */
+  private colourGroups: ColourGroup[] | null = null;
+  private colourIndex = 0;
+  /** Per-piece mean colours, sampled once per image. */
+  private pieceColours: Float32Array | null = null;
 
   /**
    * Help mode. Hover tooltips cover a mouse, but a tablet has no hover at all, so
@@ -239,10 +254,23 @@ export class App {
           <span class="divider"></span>
           <span class="group">
             <button class="btn" data-act="select-edges" data-help="Select every edge and corner piece. Press New tray straight after to gather them all in one place.">Edges</button>
+            <button class="btn" data-act="colour-sort" data-help="Group the loose pieces by colour and step through the groups one at a time. Each group is selected for you; press New tray to keep it, or skip to the next.">Sort by colour</button>
             <button class="btn" data-act="new-tray" data-help="Put the selected pieces into a new tray. With nothing selected you get an empty tray to drag pieces into. Keyboard: T" title="Put the selected pieces in a new tray (T)">New tray</button>
             <select class="tray-list" data-help="Jump the view to one of your trays, and choose which tray the Collapse and Empty buttons act on." title="Jump to a tray"><option value="">Trays…</option></select>
             <button class="btn tray-only" data-act="collapse-tray" data-help="Shrink the selected tray to a single bar, hiding its pieces so they stop cluttering the board. Press again to open it." title="Collapse or expand the selected tray">Collapse</button>
             <button class="btn tray-only" data-act="empty-tray" data-help="Remove the selected tray. Its pieces are tipped back onto the board, not deleted." title="Tip the tray out onto the board and remove it">Empty</button>
+          </span>
+          <span class="colour-nav group" hidden>
+            <button class="btn zoom" data-act="colour-prev" data-help="Show the previous colour group.">&#9664;</button>
+            <span class="swatch"></span>
+            <span class="colour-label"></span>
+            <button class="btn zoom" data-act="colour-next" data-help="Show the next colour group.">&#9654;</button>
+            <label class="field" data-help="How many colour groups to split the pieces into. Changing it re-sorts straight away.">Groups
+              <select class="colour-count">
+                <option>4</option><option selected>6</option><option>8</option><option>10</option>
+              </select>
+            </label>
+            <button class="btn" data-act="colour-done" data-help="Stop stepping through colour groups.">Done</button>
           </span>
           <span class="divider"></span>
           <span class="group">
@@ -300,6 +328,10 @@ export class App {
       trayList: q<HTMLSelectElement>('.tray-list'),
       trayRename: q<HTMLInputElement>('.tray-rename'),
       tip: q<HTMLElement>('.tip'),
+      colourNav: q<HTMLElement>('.colour-nav'),
+      colourLabel: q<HTMLElement>('.colour-label'),
+      colourCount: q<HTMLSelectElement>('.colour-count'),
+      swatch: q<HTMLElement>('.swatch'),
     };
     this.setupHelp();
 
@@ -324,6 +356,10 @@ export class App {
       else if (act === 'close-library') this.closeLibrary();
       else if (act === 'help') this.setHelpMode(!this.helpMode);
       else if (act === 'select-edges') this.selectEdges();
+      else if (act === 'colour-sort') this.startColourSort();
+      else if (act === 'colour-prev') this.stepColourGroup(-1);
+      else if (act === 'colour-next') this.stepColourGroup(1);
+      else if (act === 'colour-done') this.endColourSort();
       else if (act === 'new-tray') this.newTray();
       else if (act === 'collapse-tray') this.toggleActiveTray();
       else if (act === 'empty-tray') this.emptyActiveTray();
@@ -379,6 +415,10 @@ export class App {
       else if (e.key === 't' || e.key === 'T') this.newTray();
       else return;
       e.preventDefault();
+    });
+
+    this.els.colourCount.addEventListener('change', () => {
+      if (this.colourGroups) this.startColourSort();
     });
 
     this.els.trayList.addEventListener('change', () => {
@@ -497,6 +537,9 @@ export class App {
     };
 
     this.session = { record, state, image, imageMeta: meta };
+    // Colours are per piece, so a different cut or a different picture invalidates them.
+    this.pieceColours = null;
+    this.endColourSort();
     this.renderer.invalidateGeometry();
     this.renderer.setImage(image, image.width, image.height);
     this.els.title.value = title;
@@ -545,6 +588,8 @@ export class App {
     const { state, viewport } = deserialize(record.saved as any);
     this.session?.image.close();
     this.session = { record, state, image: bitmap, imageMeta: meta };
+    this.pieceColours = null;
+    this.endColourSort();
     this.renderer.invalidateGeometry();
     this.renderer.setImage(bitmap, bitmap.width, bitmap.height);
     this.els.title.value = record.title;
@@ -834,7 +879,10 @@ export class App {
     bar.addEventListener('change', intercept, true);
 
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.helpMode) this.setHelpMode(false);
+      if (e.key === 'Escape') {
+        if (this.helpMode) this.setHelpMode(false);
+        else if (this.colourGroups) this.endColourSort();
+      }
     });
   }
 
@@ -900,6 +948,10 @@ export class App {
     );
     this.beginTrayRename(tray.id);
     void this.save();
+
+    // Mid-sort, filing a group should advance to the next one rather than leaving the
+    // player to press the arrow after every single tray.
+    if (this.colourGroups) this.stepColourGroup(1);
   }
 
   /**
@@ -955,6 +1007,90 @@ export class App {
     this.dirty = true;
     this.setStatus(
       `${ids.length} edge piece${ids.length === 1 ? '' : 's'} selected. Press New tray to gather them.`,
+    );
+  }
+
+  // --- Colour sorting -------------------------------------------------------
+
+  /**
+   * Group the loose pieces by colour and start stepping through the groups.
+   *
+   * Groups are computed once and worked through, rather than being turned into trays
+   * automatically. The algorithm can tell that these pieces are similar; it cannot know
+   * whether you wanted "sky" and "sea" together or apart, and guessing wrong makes more
+   * work than it saves.
+   */
+  private startColourSort(): void {
+    if (!this.session) return;
+    const { state, image } = this.session;
+
+    if (!this.pieceColours) {
+      this.setStatus('Reading the picture\u2026');
+      this.pieceColours = samplePieceColours(image, image.width, image.height, state.geometry);
+    }
+
+    const groups = groupByColour(state, this.pieceColours, {
+      groups: Number(this.els.colourCount.value),
+    });
+
+    if (groups.length === 0) {
+      this.setStatus('Nothing left to sort \u2014 every piece is already in a tray.');
+      return;
+    }
+
+    this.colourGroups = groups;
+    this.colourIndex = 0;
+    this.els.colourNav.hidden = false;
+    this.showColourGroup();
+  }
+
+  private endColourSort(): void {
+    this.colourGroups = null;
+    this.els.colourNav.hidden = true;
+    this.clearSelection();
+    this.updateStatus();
+  }
+
+  private stepColourGroup(delta: number): void {
+    if (!this.colourGroups) return;
+    const n = this.colourGroups.length;
+    this.colourIndex = (this.colourIndex + delta + n) % n;
+    this.showColourGroup();
+  }
+
+  /** Select the current group, skipping any emptied since the sort was computed. */
+  private showColourGroup(attempts = 0): void {
+    if (!this.session || !this.colourGroups) return;
+    const group = this.colourGroups[this.colourIndex];
+    if (!group) return;
+
+    const members = liveMembers(this.session.state, group);
+    if (members.length === 0) {
+      // Every group can be empty once the last is filed; stop rather than spin.
+      if (attempts >= this.colourGroups.length) {
+        this.setStatus('All the colour groups have been put away.');
+        this.endColourSort();
+        return;
+      }
+      this.colourIndex = (this.colourIndex + 1) % this.colourGroups.length;
+      this.showColourGroup(attempts + 1);
+      return;
+    }
+
+    this.selection.clear();
+    for (const id of members) this.selection.add(id);
+    this.renderer.selection = this.selection;
+    this.dirty = true;
+
+    const [r, g, b] = oklabToRgb(group.centre);
+    this.els.swatch.style.background = `rgb(${r},${g},${b})`;
+    let pieces = 0;
+    for (const id of members) pieces += this.session.state.clusters.get(id)?.pieces.length ?? 0;
+    this.els.colourLabel.textContent =
+      `${this.colourIndex + 1}/${this.colourGroups.length} \u00b7 ${pieces} pieces`;
+    this.setStatus(
+      `Colour group ${this.colourIndex + 1} of ${this.colourGroups.length}: ${pieces} pieces selected. ` +
+        `Press New tray to keep it, or the arrow to skip.`,
     );
   }
 
