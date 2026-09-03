@@ -599,6 +599,33 @@ await page.keyboard.press('Escape');
 await page.waitForTimeout(200);
 check('Escape ends colour sorting', await page.evaluate(() => globalThis.__ojs.colourGroups === null));
 
+// 4f. Portable .jigsaw files: export and re-import round-trips.
+await page.click('[data-act="library"]');
+await page.waitForSelector('.lib-card', { timeout: 10_000 });
+const cardsBefore = await page.evaluate(() => document.querySelectorAll('.lib-card').length);
+const downloadPromise = page.waitForEvent('download');
+await page.click('.lib-export');
+const download = await downloadPromise;
+const exportPath = '/tmp/ojs-smoke-export.jigsaw';
+await download.saveAs(exportPath);
+check('a puzzle exports as a .jigsaw file', download.suggestedFilename().endsWith('.jigsaw'), download.suggestedFilename());
+
+await page.setInputFiles('.import-file', exportPath);
+await page.waitForTimeout(1200);
+const cardsAfter = await page.evaluate(() => document.querySelectorAll('.lib-card').length);
+check('importing it back adds a puzzle', cardsAfter === cardsBefore + 1, `${cardsBefore} -> ${cardsAfter}`);
+check('import does not overwrite the original', cardsAfter > cardsBefore);
+
+const imported = await page.evaluate(async () => {
+  document.querySelectorAll('.lib-card')[0].querySelector('.lib-open').click();
+  await new Promise((r) => setTimeout(r, 900));
+  const s = globalThis.__ojs.session;
+  return { pieces: s.state.geometry.pieces.length, title: s.record.title };
+});
+check('the imported puzzle opens with its pieces', imported.pieces > 0, `${imported.pieces} pieces`);
+// Opening from the library closes it, so there is nothing left to close.
+check('opening from the library closes it', await page.evaluate(() => document.querySelector('.library').hidden));
+
 // 5. Renaming a puzzle.
 await page.fill('.title', 'Great Ocean Road');
 await page.dispatchEvent('.title', 'change');

@@ -3,9 +3,39 @@
 An open-source, local-first, cross-platform digital jigsaw studio. Works fully offline.
 No account, no server, no network.
 
-**Status: M3.** Import a picture, cut it into 12–2,000 pieces, drag, snap, rotate,
-multi-select, sort into named trays, and keep a library of puzzles in progress. All
-offline, with no runtime dependencies.
+**Status: M5.** Import a picture, cut it into 12–2,000 pieces, drag, snap, rotate,
+multi-select, gather the edges, sort by colour, file pieces into named trays, and keep a
+library of puzzles. Installs as an app and runs completely offline, with no runtime
+dependencies and no account.
+
+## Install it
+
+The built app is a PWA: open it in a browser, choose **Install** (Chrome and Edge offer
+this in the address bar; on Android it is "Add to home screen"), and it runs full-screen
+and completely offline afterwards. Your puzzles live in that browser's storage on that
+device.
+
+## Backup, and moving puzzles between devices
+
+There is no cloud and no account, so there are two honest paths.
+
+**Export / import.** Every puzzle in **My puzzles** has an **Export** button that saves a
+`.jigsaw` file — the picture and your progress in one self-contained file. **Import…**
+reads one back. Works in every browser, including on the tablet. Put the file in your
+OneDrive or Google Drive folder and it is backed up.
+
+**Backup folder** (Chrome or Edge on a computer only). Press **Backup folder…** in
+My puzzles and pick a folder — your OneDrive or Google Drive folder, say. From then on
+every save also writes a `.jigsaw` file there, and the sync client you already run does
+the uploading. No account, no OAuth, no server, and it still works with the network
+unplugged.
+
+Two things to be clear about. The [File System Access API](https://caniuse.com/native-filesystem-api)
+that powers the folder link exists only in Chrome, Edge and Opera **on a computer** — no
+mobile browser has it, so on the tablet you use Export and Import. And this is file sync,
+not merge: if you play the same puzzle on two devices, your sync client will make a
+conflict copy and one version wins. For one person playing on one device at a time it is
+exactly right; it is not multi-device sync and is not pretending to be.
 
 ## Running it
 
@@ -26,10 +56,11 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 84 headless engine tests, ~1.4 s |
+| `npm test` | 100 headless engine tests, ~1.5 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
+| `node scripts/pwa-check.mjs` | verify it installs and boots with the server off |
 
 ## Controls
 
@@ -158,10 +189,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 
 ## Roadmap
 
-Done: the puzzle engine, selection and rotation, the puzzle library, zoom controls, and
-piece trays. Next: sorting pieces into trays automatically (by colour, and by image
-region), then crop and rotate before generating. `ARCHITECTURE.md` §15 lists what is
-deliberately not built.
+Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
+edge and colour sorting, in-app help, and shipping (PWA, GitHub Pages, portable files).
+Next: crop and rotate before generating, then library depth (tags, search, notes) and
+assistance levels. `ARCHITECTURE.md` §17 lists what is deliberately not built.
 
 ## Licence
 

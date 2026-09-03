@@ -1,6 +1,7 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M3 (engine, selection, rotation, library, trays).
+Status of this document: covers M1 to M5 (engine, selection, rotation, library, trays,
+colour sorting, and shipping).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -10,7 +11,7 @@ src/engine/    headless. no DOM, no canvas, no framework. runs in Node.
 src/render/    Canvas2D renderer, baked-bitmap cache, viewport maths.
 src/input/     Pointer Events -> engine operations.
 src/ui/        shell, IndexedDB persistence, reference panel.
-scripts/       benchmark and end-to-end smoke test (Playwright, dev-only).
+scripts/       benchmark, smoke test, PWA check, service-worker generator.
 ```
 
 The line between `engine` and everything else is the single most important structural
@@ -18,7 +19,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 80 current tests run headless in about 1.4 seconds. If engine code ever needs jsdom, the
+All 100 current tests run headless in about 1.5 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -142,7 +143,7 @@ that is close to the line and is worth re-measuring on the actual device.
 
 ## 8. Dependencies and licences
 
-Runtime dependencies: **none.** The built bundle is 54 KB (18 KB gzipped).
+Runtime dependencies: **none.** The built bundle is 72 KB (24 KB gzipped).
 
 | package | role | licence |
 |---|---|---|
@@ -376,7 +377,59 @@ since colour sorting makes 200-piece selections normal where before selections w
 handful. Measured cost of outlining 211 visible pieces: **0.0 ms**. Stroking cached Path2D
 objects inside an existing transform is free at this scale.
 
-## 16. Known limitations after M2
+## 16. Shipping: PWA, Pages, and portable files
+
+**Deployment** is a GitHub Actions workflow that typechecks, runs the tests, builds and
+publishes to Pages on every push to `main`. A push that breaks the engine fails the
+workflow rather than deploying a broken puzzle.
+
+**The service worker is written by hand** (`scripts/build-sw.mjs`, about sixty lines)
+rather than pulled from a PWA plugin, because it is small enough to understand completely
+and a plugin would be a build dependency with its own upgrade treadmill.
+
+Its strategy exists to avoid the classic PWA failure — an app that caches itself on first
+visit and then never updates for anyone again:
+
+- **Navigations are network-first**, cache as fallback. Online you always get the deployed
+  version. A cache-first navigation would pin every user to whatever was live the day they
+  first opened it.
+- **Hashed assets are cache-first.** Vite fingerprints them, so a hit can never be stale.
+- **The cache name carries a build id** derived from the content hashes, and activating a
+  new worker deletes every other cache. An identical rebuild does not churn clients.
+
+`scripts/pwa-check.mjs` asserts the thing that otherwise fails silently: it serves the
+build, lets the worker install, **kills the server**, reloads, and requires the app to
+boot having made zero network requests.
+
+### Backup without a cloud
+
+"Can it save to Google Drive or OneDrive" has a good answer that involves neither
+company's API. Point the app at a synced folder with the File System Access API and it
+writes a `.jigsaw` file there on every save; the desktop sync client uploads it. No OAuth,
+no account, no server, nothing to re-verify annually, and it works offline because writing
+to a local folder does.
+
+Deliberately **not** built: Drive/Graph OAuth integrations. They would require accounts —
+contradicting the no-account rule — plus client registration, token storage, periodic
+re-verification, and a redirect flow, in exchange for something a synced folder already
+does.
+
+Limits, recorded honestly: the API is desktop Chromium only (~27% of browsers, no mobile
+at all), permission lapses between sessions and can only be re-requested during a user
+gesture — which is why the autosave path never prompts — and this is file sync, not merge.
+Two devices on one puzzle produce a conflict copy and one winner.
+
+### The `.jigsaw` file
+
+JSON with the image inlined as a data URL, not a zip. Base64 costs a third more bytes —
+700 KB on a 2 MB photo — and buys no zip dependency, a diffable file, and something any
+tool can open. Geometry is not stored; it regenerates from the seed, so the state costs
+kilobytes regardless of piece count. An import always gets a **new** record id, so
+importing the same file twice gives two puzzles rather than silently overwriting one you
+were part-way through, while the image keeps its content hash so one photograph is still
+stored once.
+
+## 17. Known limitations after M2
 
 - No image crop/rotate before generation. Images are downscaled to 4000 px on the long
   edge and used whole.

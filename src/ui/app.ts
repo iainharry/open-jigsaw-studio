@@ -44,6 +44,15 @@ import { samplePieceColours } from '../render/pieceColours.js';
 import { fitTo, screenToWorld, worldToScreen, zoomAbout } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
 import {
+  backupSupported,
+  chooseFolder,
+  folderPermission,
+  forgetFolder,
+  getStoredFolder,
+  writeBackup,
+} from './backupFolder.js';
+import { buildPuzzleFile, puzzleFileToBlob, readPuzzleFile, safeFileName } from './puzzleFile.js';
+import {
   deletePuzzle,
   getImage,
   getLastOpened,
@@ -122,7 +131,12 @@ export class App {
     colourLabel: HTMLElement;
     colourCount: HTMLSelectElement;
     swatch: HTMLElement;
+    importFile: HTMLInputElement;
+    libNote: HTMLElement;
   };
+
+  /** Folder that receives a .jigsaw copy on every save, if one has been chosen. */
+  private backupHandle: Awaited<ReturnType<typeof getStoredFolder>> = null;
 
   /** Colour groups being stepped through, and where we are in them. */
   private colourGroups: ColourGroup[] | null = null;
@@ -209,6 +223,11 @@ export class App {
     });
     window.addEventListener('beforeunload', () => {
       void this.save();
+    });
+
+    void getStoredFolder().then((handle) => {
+      this.backupHandle = handle;
+      this.refreshBackupButton();
     });
 
     this.loop();
@@ -300,8 +319,13 @@ export class App {
           <div class="lib-panel">
             <div class="lib-head">
               <strong>My puzzles</strong>
-              <button class="btn" data-act="close-library">Close</button>
+              <span class="lib-head-actions">
+                <label class="btn" data-help="Open a .jigsaw file: the picture and your progress come back exactly as they were.">Import…<input type="file" class="import-file" accept=".jigsaw,application/json" hidden /></label>
+                <button class="btn backup-btn" data-act="backup-folder">Backup folder…</button>
+                <button class="btn" data-act="close-library">Close</button>
+              </span>
             </div>
+            <p class="lib-note"></p>
             <div class="lib-list"></div>
           </div>
         </div>
@@ -332,6 +356,8 @@ export class App {
       colourLabel: q<HTMLElement>('.colour-label'),
       colourCount: q<HTMLSelectElement>('.colour-count'),
       swatch: q<HTMLElement>('.swatch'),
+      importFile: q<HTMLInputElement>('.import-file'),
+      libNote: q<HTMLElement>('.lib-note'),
     };
     this.setupHelp();
 
@@ -354,6 +380,7 @@ export class App {
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
+      else if (act === 'backup-folder') void this.chooseBackupFolder();
       else if (act === 'help') this.setHelpMode(!this.helpMode);
       else if (act === 'select-edges') this.selectEdges();
       else if (act === 'colour-sort') this.startColourSort();
@@ -379,6 +406,12 @@ export class App {
       this.updateRotationUi();
       this.dirty = true;
       void this.save();
+    });
+
+    this.els.importFile.addEventListener('change', () => {
+      const file = this.els.importFile.files?.[0];
+      if (file) void this.importPuzzleFile(file);
+      this.els.importFile.value = '';
     });
 
     this.els.file.addEventListener('change', () => {
@@ -1235,6 +1268,7 @@ export class App {
         </div>
         <div class="lib-actions">
           <button class="btn lib-open">Open</button>
+          <button class="btn lib-export" title="Save as a .jigsaw file">Export</button>
           <button class="btn lib-delete" title="Delete this puzzle">Delete</button>
         </div>`;
       // Set the title as text, never as HTML: it is user input.
@@ -1243,13 +1277,134 @@ export class App {
       card.querySelector<HTMLButtonElement>('.lib-open')!.addEventListener('click', () => {
         void this.openFromLibrary(record);
       });
+      card.querySelector<HTMLButtonElement>('.lib-export')!.addEventListener('click', () => {
+        void this.exportPuzzle(record);
+      });
       card.querySelector<HTMLButtonElement>('.lib-delete')!.addEventListener('click', (e) => {
         void this.deleteFromLibrary(record, e.currentTarget as HTMLButtonElement);
       });
       list.append(card);
     }
 
+    this.refreshBackupButton();
     this.els.library.hidden = false;
+  }
+
+  // --- Files and backup -----------------------------------------------------
+
+  /** Download a puzzle as a self-contained `.jigsaw` file. */
+  private async exportPuzzle(record: PuzzleRecord): Promise<void> {
+    try {
+      const image = await getImage(record.imageHash);
+      if (!image) throw new Error('the picture for this puzzle is missing');
+      const blob = puzzleFileToBlob(await buildPuzzleFile(record, image));
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = safeFileName(record.title);
+      link.click();
+      // Revoke on the next turn of the event loop; revoking immediately can cancel the
+      // download in some browsers before it has started reading the blob.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+
+      this.setLibraryNote(`Saved \u201c${record.title}\u201d as a .jigsaw file.`);
+    } catch (err) {
+      this.setLibraryNote(`Could not export: ${(err as Error).message}`);
+    }
+  }
+
+  private async importPuzzleFile(file: File): Promise<void> {
+    this.setLibraryNote('Reading\u2026');
+    try {
+      const { record, image } = await readPuzzleFile(await file.text());
+      // Give it a preview now rather than leaving a blank card in the library until the
+      // puzzle happens to be opened.
+      try {
+        const bitmap = await createImageBitmap(image.blob, { imageOrientation: 'from-image' });
+        record.thumbnail = makeThumbnail(bitmap, bitmap.width, bitmap.height);
+        bitmap.close();
+      } catch {
+        /* an unreadable picture still imports; the card just shows no preview */
+      }
+      await putImage(image);
+      await putPuzzle(record);
+      this.setLibraryNote(`Imported \u201c${record.title}\u201d.`);
+      await this.openLibrary();
+    } catch (err) {
+      this.setLibraryNote((err as Error).message);
+    }
+  }
+
+  private setLibraryNote(text: string): void {
+    this.els.libNote.textContent = text;
+    this.els.libNote.hidden = text.length === 0;
+  }
+
+  /**
+   * Choose a folder that receives a .jigsaw copy of every save.
+   *
+   * Point it at OneDrive or Google Drive and the desktop sync client does the uploading:
+   * backup and rough cross-device transfer with no account, no OAuth and no server. Only
+   * possible on desktop Chromium; every mobile browser lacks the API entirely.
+   */
+  private async chooseBackupFolder(): Promise<void> {
+    if (!backupSupported()) {
+      this.setLibraryNote(
+        'This browser cannot link a folder. Use Export instead, and save the file into ' +
+          'your OneDrive or Google Drive folder yourself.',
+      );
+      return;
+    }
+    if (this.backupHandle) {
+      await forgetFolder();
+      this.backupHandle = null;
+      this.refreshBackupButton();
+      this.setLibraryNote('Backup folder disconnected.');
+      return;
+    }
+    const handle = await chooseFolder();
+    if (!handle) return;
+    this.backupHandle = handle;
+    this.refreshBackupButton();
+    this.setLibraryNote(
+      `Backing up to \u201c${handle.name}\u201d. Every save writes a .jigsaw file there; ` +
+        `if that folder is synced by OneDrive or Google Drive, your puzzles go with it.`,
+    );
+    await this.writeBackupCopy();
+  }
+
+  private refreshBackupButton(): void {
+    const btn = this.root.querySelector<HTMLButtonElement>('.backup-btn');
+    if (!btn) return;
+    const supported = backupSupported();
+    btn.disabled = false;
+    btn.textContent = this.backupHandle ? `Backup: ${this.backupHandle.name}` : 'Backup folder\u2026';
+    btn.classList.toggle('on', Boolean(this.backupHandle));
+    btn.dataset['help'] = supported
+      ? 'Write a .jigsaw copy of every save into a folder you choose. Point it at your OneDrive or Google Drive folder and your sync client backs the puzzles up for you. Press again to disconnect.'
+      : 'This browser cannot link a folder \u2014 that only works in Chrome or Edge on a computer. Use Export instead and save the file into your synced folder.';
+  }
+
+  /**
+   * Copy the current puzzle into the backup folder.
+   *
+   * Never prompts: a browser only shows the permission dialog during a user gesture, so
+   * asking here would fail silently during an autosave and look like a bug. If the grant
+   * has lapsed the copy is skipped until the next time the folder is chosen by hand.
+   */
+  private async writeBackupCopy(): Promise<void> {
+    if (!this.backupHandle || !this.session) return;
+    const { record } = this.session;
+    try {
+      if ((await folderPermission(this.backupHandle)) !== 'granted') return;
+      const image = await getImage(record.imageHash);
+      if (!image) return;
+      const blob = puzzleFileToBlob(await buildPuzzleFile(record, image));
+      await writeBackup(this.backupHandle, safeFileName(record.title), blob);
+    } catch {
+      // A backup that fails must never interrupt play.
+    }
   }
 
   private closeLibrary(): void {
@@ -1301,6 +1456,7 @@ export class App {
     record.progress = progress(state);
     if (isComplete(state) && record.completedAt === null) record.completedAt = Date.now();
     await putPuzzle(record).catch(() => undefined);
+    void this.writeBackupCopy();
   }
 
   private scheduleSave(): void {
