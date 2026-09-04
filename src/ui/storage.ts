@@ -7,6 +7,8 @@
  * manifest plus a referenced image rather than a fresh copy every time.
  */
 
+import type { ImageEdit } from '../engine/imageEdit.js';
+
 const DB_NAME = 'open-jigsaw-studio';
 const DB_VERSION = 1;
 const IMAGES = 'images';
@@ -34,6 +36,15 @@ export interface PuzzleRecord {
   progress: number;
   /** Small data-URL preview, so the library lists without decoding every full image. */
   thumbnail: string | null;
+  /**
+   * How the stored image was prepared before cutting — crop, rotation, adjustments.
+   *
+   * Held as parameters rather than as a second copy of the picture, so the original stays
+   * deduplicated by content hash and the preparation can be reopened and changed. Absent
+   * or null on every puzzle made before preparation existed, and on any puzzle cut from
+   * the picture as it came.
+   */
+  edit?: ImageEdit | null;
 }
 
 function open(): Promise<IDBDatabase> {

@@ -3,10 +3,10 @@
 An open-source, local-first, cross-platform digital jigsaw studio. Works fully offline.
 No account, no server, no network.
 
-**Status: M5.** Import a picture, cut it into 12–2,000 pieces, drag, snap, rotate,
-multi-select, gather the edges, sort by colour, file pieces into named trays, and keep a
-library of puzzles. Installs as an app and runs completely offline, with no runtime
-dependencies and no account.
+**Status: M6.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
+drag, snap, rotate, multi-select, gather the edges, sort by colour, file pieces into named
+trays, and keep a library of puzzles. Installs as an app and runs completely offline, with
+no runtime dependencies and no account.
 
 ## Install it
 
@@ -56,7 +56,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 100 headless engine tests, ~1.5 s |
+| `npm test` | 128 headless engine tests, ~1.5 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -88,6 +88,24 @@ too means zooming so far out that a 500-piece puzzle arrives with 28-pixel piece
 toolbar readout turns amber when pieces drop below about 34 px. Note that above roughly
 55–65 px per piece, 500 pieces cover most of any monitor, so seeing them all at once and
 seeing them clearly are genuinely in tension; `ARCHITECTURE.md` §12 has the arithmetic.
+
+## Preparing a picture
+
+**Prepare…** opens the picture full-screen before it is cut. Drag the corners to crop,
+pick a shape (16:9, square and so on) to constrain it, turn it a quarter at a time, flip
+it, and nudge **Straighten** for a sloping horizon — the crop is held inside the
+straightened frame, so you never end up with empty corners. **Brightness**, **Contrast**
+and **Saturation** are there to make a flat or murky picture puzzleable, not to be a photo
+editor.
+
+The readout under the picture updates as you go: it shows the size you will end up with
+and how big each piece will be, which matters, because cropping half the picture away
+makes a 1,000-piece puzzle noticeably harder to see.
+
+Two things worth knowing. **Your original is never changed** — the crop is stored as a
+setting and applied afresh each time the puzzle opens, so you can press Prepare again
+later and widen a crop you took too far. And **preparing cuts a new puzzle**, because the
+pieces are shaped around a picture of a particular size; finish the one you are on first.
 
 ## Finding your way around
 
@@ -190,9 +208,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 ## Roadmap
 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
-edge and colour sorting, in-app help, and shipping (PWA, GitHub Pages, portable files).
-Next: crop and rotate before generating, then library depth (tags, search, notes) and
-assistance levels. `ARCHITECTURE.md` §17 lists what is deliberately not built.
+edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), and
+image preparation. Next: library depth (tags, search, notes, difficulty, completion
+history) and assistance levels (ghost image, likely-neighbour hints, edges-only mode).
+`ARCHITECTURE.md` §18 lists what is deliberately not built.
 
 ## Licence
 

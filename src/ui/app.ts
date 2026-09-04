@@ -13,6 +13,9 @@ import {
   deserialize,
   edgeClusters,
   generateGeometry,
+  DEFAULT_EDIT,
+  isUneditedImage,
+  type ImageEdit,
   groupByColour,
   liveMembers,
   oklabToRgb,
@@ -39,6 +42,8 @@ import {
   type Viewport,
 } from '../engine/index.js';
 import { PointerInput, type Tool } from '../input/pointer.js';
+import { PrepareView } from './prepare.js';
+import { renderEdited } from '../render/applyEdit.js';
 import { Renderer } from '../render/renderer.js';
 import { samplePieceColours } from '../render/pieceColours.js';
 import { fitTo, screenToWorld, worldToScreen, zoomAbout } from '../render/viewport.js';
@@ -92,8 +97,12 @@ function formatWhen(ms: number): string {
 interface Session {
   record: PuzzleRecord;
   state: PuzzleState;
+  /** The prepared picture the puzzle is cut from. */
   image: ImageBitmap;
+  /** The untouched original, kept so preparation can be reopened non-destructively. */
+  original: ImageBitmap;
   imageMeta: StoredImage;
+  edit: ImageEdit;
 }
 
 export class App {
@@ -254,6 +263,7 @@ export class App {
           <label class="field" data-help="How many pieces to cut the picture into. Press New puzzle to apply it. Very high counts on a small picture make soft, low-detail pieces.">Pieces
             <select class="pieces"></select>
           </label>
+          <button class="btn" data-act="prepare" data-help="Crop, straighten and adjust the picture, then cut it into a new puzzle. Your original photo is never changed.">Prepare…</button>
           <button class="btn" data-act="new" data-help="Cut the same picture again into the number of pieces chosen above. Your current progress on it is replaced.">New puzzle</button>
           <button class="btn" data-act="shuffle" data-help="Break everything apart and scatter it again. The picture and piece count stay the same.">Shuffle</button>
           <span class="group">
@@ -372,6 +382,7 @@ export class App {
     this.root.addEventListener('click', (e) => {
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
       if (act === 'new') void this.newPuzzle();
+      else if (act === 'prepare') void this.prepareImage();
       else if (act === 'shuffle') this.shuffle();
       else if (act === 'fit-board') this.fitBoard();
       else if (act === 'fit-all') this.fitAll();
@@ -492,6 +503,26 @@ export class App {
     await this.adoptImage(blob, 'Sample landscape');
   }
 
+  /** Release both bitmaps a session owns. Forgetting the original leaks a whole photo. */
+  private closeSession(): void {
+    if (!this.session) return;
+    this.session.image.close();
+    this.session.original.close();
+    this.session = null;
+  }
+
+  /**
+   * The picture a puzzle is actually cut from.
+   *
+   * Always a distinct bitmap, even when nothing was changed, so closing one session's
+   * working image can never close the original underneath it.
+   */
+  private async deriveImage(original: ImageBitmap, edit: ImageEdit): Promise<ImageBitmap> {
+    if (isUneditedImage(edit)) return createImageBitmap(original);
+    const out = await renderEdited(original, original.width, original.height, edit, MAX_IMAGE_EDGE);
+    return out.bitmap;
+  }
+
   private async loadImageFile(file: File): Promise<void> {
     this.setStatus('Reading image…');
     try {
@@ -529,12 +560,21 @@ export class App {
     };
     await putImage(meta).catch(() => undefined);
 
-    this.session?.image.close();
-    this.session = null;
-    await this.startPuzzle(meta, bitmap, name);
+    this.closeSession();
+    await this.startPuzzle(meta, bitmap, name, DEFAULT_EDIT);
   }
 
-  private async startPuzzle(meta: StoredImage, image: ImageBitmap, title: string): Promise<void> {
+  /**
+   * Cut a new puzzle. `original` is the picture as stored; `edit` says how to prepare it
+   * first, and the cut is made from the prepared result.
+   */
+  private async startPuzzle(
+    meta: StoredImage,
+    original: ImageBitmap,
+    title: string,
+    edit: ImageEdit,
+  ): Promise<void> {
+    const image = await this.deriveImage(original, edit);
     const requested = Number(this.els.pieces.value);
     const limits = pieceCountLimits(image.width, image.height);
     // Only the hard maximum is enforced. Going past `comfortable` is the player's call.
@@ -567,9 +607,10 @@ export class App {
       completedAt: null,
       progress: 0,
       thumbnail: makeThumbnail(image, image.width, image.height),
+      edit: isUneditedImage(edit) ? null : edit,
     };
 
-    this.session = { record, state, image, imageMeta: meta };
+    this.session = { record, state, image, original, imageMeta: meta, edit };
     // Colours are per piece, so a different cut or a different picture invalidates them.
     this.pieceColours = null;
     this.endColourSort();
@@ -619,12 +660,16 @@ export class App {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { state, viewport } = deserialize(record.saved as any);
-    this.session?.image.close();
-    this.session = { record, state, image: bitmap, imageMeta: meta };
+    // The prepared picture is re-derived from the original every time, which is why the
+    // crop could be stored as parameters instead of as a second copy of the photograph.
+    const edit: ImageEdit = record.edit ?? DEFAULT_EDIT;
+    const image = await this.deriveImage(bitmap, edit);
+    this.closeSession();
+    this.session = { record, state, image, original: bitmap, imageMeta: meta, edit };
     this.pieceColours = null;
     this.endColourSort();
     this.renderer.invalidateGeometry();
-    this.renderer.setImage(bitmap, bitmap.width, bitmap.height);
+    this.renderer.setImage(image, image.width, image.height);
     this.els.title.value = record.title;
     this.els.pieces.value = String(
       PIECE_CHOICES.reduce((best, n) =>
@@ -638,7 +683,7 @@ export class App {
     // Records written before thumbnails existed get one now, so the library is not
     // permanently full of blank cards for older puzzles.
     if (!record.thumbnail) {
-      record.thumbnail = makeThumbnail(bitmap, bitmap.width, bitmap.height);
+      record.thumbnail = makeThumbnail(image, image.width, image.height);
       await putPuzzle(record).catch(() => undefined);
     }
     this.drawReference();
@@ -652,11 +697,43 @@ export class App {
 
   private async newPuzzle(): Promise<void> {
     if (!this.session) return void this.useDemoImage();
-    const { imageMeta, image, record } = this.session;
-    // Reuse the already-decoded bitmap rather than re-reading it from storage.
-    const clone = await createImageBitmap(image);
-    this.session = null;
-    await this.startPuzzle(imageMeta, clone, record.title);
+    const { imageMeta, original, record, edit } = this.session;
+    // Reuse the already-decoded bitmap rather than re-reading it from storage. The clone
+    // is taken before the old session is closed, since closing releases the original.
+    const clone = await createImageBitmap(original);
+    this.closeSession();
+    await this.startPuzzle(imageMeta, clone, record.title, edit);
+  }
+
+  /**
+   * Reopen preparation for the current picture and cut a fresh puzzle from the result.
+   *
+   * Preparation always starts from the untouched original, so a crop can be widened as
+   * easily as narrowed and adjustments never compound. Cutting is unavoidable: the piece
+   * outlines are laid out over a picture of a particular size, so changing the picture
+   * changes the puzzle.
+   */
+  private async prepareImage(): Promise<void> {
+    if (!this.session) return;
+    const { original, imageMeta, record, edit } = this.session;
+
+    const view = new PrepareView(this.root, {
+      image: original,
+      edit,
+      pieceCount: Number(this.els.pieces.value),
+      maxEdge: MAX_IMAGE_EDGE,
+      title: record.title,
+    });
+    const next = await view.open();
+    if (!next) {
+      this.setStatus('Preparation cancelled — the puzzle is untouched.');
+      return;
+    }
+
+    const clone = await createImageBitmap(original);
+    const title = record.title;
+    this.closeSession();
+    await this.startPuzzle(imageMeta, clone, title, next);
   }
 
   private shuffle(): void {
@@ -1322,7 +1399,11 @@ export class App {
       // puzzle happens to be opened.
       try {
         const bitmap = await createImageBitmap(image.blob, { imageOrientation: 'from-image' });
-        record.thumbnail = makeThumbnail(bitmap, bitmap.width, bitmap.height);
+        // An imported puzzle may have been cut from a prepared picture, so the card has
+        // to show the prepared version — otherwise a cropped puzzle previews uncropped.
+        const shown = await this.deriveImage(bitmap, record.edit ?? DEFAULT_EDIT);
+        record.thumbnail = makeThumbnail(shown, shown.width, shown.height);
+        shown.close();
         bitmap.close();
       } catch {
         /* an unreadable picture still imports; the card just shows no preview */
@@ -1436,8 +1517,7 @@ export class App {
     await deletePuzzle(record.id).catch(() => undefined);
     await pruneOrphanImages().catch(() => 0);
     if (this.session?.record.id === record.id) {
-      this.session.image.close();
-      this.session = null;
+      this.closeSession();
       await this.useDemoImage();
     }
     await this.openLibrary();

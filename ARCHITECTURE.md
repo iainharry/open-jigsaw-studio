@@ -429,12 +429,55 @@ importing the same file twice gives two puzzles rather than silently overwriting
 were part-way through, while the image keeps its content hash so one photograph is still
 stored once.
 
-## 17. Known limitations after M2
+## 17. Image preparation
 
-- No image crop/rotate before generation. Images are downscaled to 4000 px on the long
-  edge and used whole.
-- No puzzle library UI. Multiple puzzles are stored in IndexedDB but only the last one
-  reopens.
+Crop, quarter turns, straighten, flip, and three light adjustments, applied before the
+picture is cut. Three decisions carry it.
+
+**An edit is parameters, never a second picture.** `ImageEdit` is a handful of numbers and
+a rectangle stored on the puzzle record; the prepared picture is re-derived from the
+original every time the puzzle opens. Storing the cropped result instead would have cost a
+second copy of the photograph per puzzle, broken the content-hash deduplication that lets
+six puzzles from one picture cost one picture, and made a crop permanent — reopening
+preparation can widen a crop precisely because the original is still there. The smoke test
+asserts the re-derivation specifically: it cuts a square puzzle from a landscape picture,
+reloads, and requires the geometry to still be square.
+
+**The crop lives in post-rotation coordinates.** `usableArea()` gives the largest
+axis-aligned rectangle inside the straightened frame, which is what stops a three-degree
+straighten leaving transparent wedges in the corners, and every crop is clamped into it.
+The alternative — storing the crop against the unrotated photo — means the box crawls
+across the picture while the straighten slider moves, which is exactly the interaction
+people find maddening in photo editors.
+
+**The maths is separated from the canvas.** `src/engine/imageEdit.ts` is pure geometry
+over numbers and tests in Node (28 tests, including one that rotates each corner of the
+inscribed rectangle back to prove it genuinely fits); `src/render/applyEdit.ts` holds the
+canvas work. The order there is load-bearing — quarter turns, straighten, flip, crop,
+colour, downscale — and it is two passes on purpose, since a single clever transform would
+need the crop expressed in pre-rotation space.
+
+Preparation always cuts a new puzzle. It cannot do otherwise: piece outlines are laid out
+over a picture of a particular size, so changing the picture changes the puzzle. The
+readout shows the resulting piece size live, because "2000 pieces" means something rather
+different after a crop takes half the picture away.
+
+Adjustments are deliberately three sliders driving CSS filters, not a photo editor. The
+job is making a picture *puzzleable* — lifting a murky scan until piece colours can be
+told apart — and levels, curves and white balance would be a different application.
+
+The `.jigsaw` format carries the edit and claims **version 2 only when it has one**. A v1
+reader given a cropped puzzle would lay pieces cut from the prepared picture over the
+uncropped original and put every one of them in the wrong place; refusing the file is
+better than showing nonsense. Unedited puzzles still claim v1, so ordinary files stay
+openable by older builds.
+
+## 18. Known limitations after M2
+
+- Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
+  is no way around this: the pieces were cut from the old picture.
+- Adjustments are CSS filters, so they clip rather than roll off. A hard push on contrast
+  crushes the shadows.
 - No named-group UI for *connected* assemblies. `nameCluster()` exists and round-trips
   through save files; nothing calls it yet. Trays (section 13) cover the unconnected case.
 - Trays do not scroll. A tray with two hundred pieces grows tall rather than paging, so a

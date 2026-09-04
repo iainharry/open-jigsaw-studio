@@ -672,6 +672,59 @@ const traysAfterReload = await page.evaluate(() => {
 check('trays survive a page reload', traysAfterReload !== null && traysAfterReload.name === 'Blue sky' && traysAfterReload.held > 0, traysAfterReload ? `“${traysAfterReload.name}” with ${traysAfterReload.held} clusters` : 'no trays');
 check('tray membership is rebuilt on load', traysAfterReload?.mapped === true);
 
+// 8. Image preparation: turn and crop the picture, then cut a puzzle from the result.
+const beforePrep = await page.evaluate(() => ({
+  w: globalThis.__ojs.session.state.geometry.imageWidth,
+  h: globalThis.__ojs.session.state.geometry.imageHeight,
+}));
+await page.click('[data-act="prepare"]');
+await page.waitForSelector('.prepare .prep-canvas', { timeout: 10_000 });
+await page.waitForTimeout(200);
+await page.click('[data-prep="rot-right"]');
+await page.locator('.prep-aspect', { hasText: 'Square' }).click();
+await page.waitForTimeout(150);
+const prepReadout = await page.textContent('.prep-readout');
+check('preparation previews the resulting piece size', /\d+×\d+ → \d+ pieces/.test(prepReadout ?? ''), prepReadout ?? '');
+await page.click('[data-prep="create"]');
+await page.waitForSelector('.prepare', { state: 'detached', timeout: 10_000 });
+await page.waitForTimeout(400);
+
+const afterPrep = await page.evaluate(() => ({
+  w: globalThis.__ojs.session.state.geometry.imageWidth,
+  h: globalThis.__ojs.session.state.geometry.imageHeight,
+  turns: globalThis.__ojs.session.record.edit?.turns ?? null,
+  original: { w: globalThis.__ojs.session.original.width, h: globalThis.__ojs.session.original.height },
+}));
+const expectedSide = Math.min(beforePrep.w, beforePrep.h);
+check(
+  'a square crop cuts a square puzzle',
+  Math.abs(afterPrep.w - afterPrep.h) <= 1 && Math.abs(afterPrep.w - expectedSide) <= 2,
+  `${beforePrep.w}×${beforePrep.h} -> ${afterPrep.w}×${afterPrep.h}`,
+);
+check('the edit is recorded with the puzzle', afterPrep.turns === 1, `turns=${afterPrep.turns}`);
+check(
+  'the original picture is kept untouched beside the prepared one',
+  afterPrep.original.w === beforePrep.w && afterPrep.original.h === beforePrep.h,
+  `${afterPrep.original.w}×${afterPrep.original.h}`,
+);
+
+// The edit is stored as parameters, so the prepared picture has to survive a reload by
+// being re-derived -- not by having been saved as a second copy of the photograph.
+await page.evaluate(() => globalThis.__ojs.save());
+await page.reload();
+await page.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await page.waitForTimeout(500);
+const rederived = await page.evaluate(() => ({
+  w: globalThis.__ojs.session.state.geometry.imageWidth,
+  h: globalThis.__ojs.session.state.geometry.imageHeight,
+  turns: globalThis.__ojs.session.record.edit?.turns ?? null,
+}));
+check(
+  'the prepared picture is re-derived after a reload',
+  rederived.w === afterPrep.w && rederived.h === afterPrep.h && rederived.turns === 1,
+  `${rederived.w}×${rederived.h}, turns=${rederived.turns}`,
+);
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

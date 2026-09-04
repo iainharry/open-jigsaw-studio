@@ -477,3 +477,134 @@ body {
   min-width: 12ch;
   text-align: center;
 }
+
+/* --- Image preparation ------------------------------------------------------
+   A full-screen overlay rather than a panel: judging a crop needs the picture as
+   large as the screen allows, and the controls are only useful while looking at it. */
+.prepare {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 11, 0.86);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 20;
+}
+
+.prep-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  width: min(1100px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+}
+
+.prep-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.prep-title {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The preview is letterboxed inside this box and the crop overlay is placed on top of
+   it by offset, so the stage has to be the positioning context. */
+.prep-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0d10;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.prep-canvas {
+  display: block;
+}
+
+.prep-overlay {
+  position: absolute;
+  cursor: crosshair;
+}
+
+.prep-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 6px 18px;
+}
+
+.prep-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prep-row input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 100px;
+  accent-color: var(--accent);
+}
+
+.prep-label {
+  color: var(--muted);
+  min-width: 9ch;
+  flex: none;
+}
+
+.prep-out {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 5ch;
+  text-align: right;
+}
+
+.prep-aspects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.prep-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.prep-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.prep-readout {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prep-readout.warn {
+  color: #e8b45f;
+}
+
+/* On a phone the sliders matter more than the picture being huge. */
+@media (max-height: 620px) {
+  .prep-stage {
+    min-height: 140px;
+  }
+}
