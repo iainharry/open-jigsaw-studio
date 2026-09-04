@@ -608,3 +608,13 @@ body {
     min-height: 140px;
   }
 }
+
+/* A puzzle whose picture is no longer in storage. Stated on the card rather than only
+   discovered on pressing Open, and offered a way out rather than just a complaint. */
+.lib-card.orphaned {
+  border-color: #7a5a24;
+}
+
+.lib-warn {
+  color: #e8b45f;
+}

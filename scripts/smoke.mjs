@@ -725,6 +725,73 @@ check(
   `${rederived.w}×${rederived.h}, turns=${rederived.turns}`,
 );
 
+// 9. A puzzle whose picture has gone missing: it is flagged, and it can be relinked.
+//    Losing the image row is the failure that used to produce a card that simply would
+//    not open, blaming "its image is missing" whatever had actually gone wrong.
+const orphan = await page.evaluate(async () => {
+  const hash = globalThis.__ojs.session.record.imageHash;
+  // Keep the bytes so the relink has a real file to offer, then remove the row.
+  const db = await new Promise((res, rej) => {
+    const r = indexedDB.open('open-jigsaw-studio');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  const blob = await new Promise((res, rej) => {
+    const r = db.transaction('images', 'readonly').objectStore('images').get(hash);
+    r.onsuccess = () => res(r.result?.blob ?? null);
+    r.onerror = () => rej(r.error);
+  });
+  await new Promise((res, rej) => {
+    const tx = db.transaction('images', 'readwrite');
+    tx.objectStore('images').delete(hash);
+    tx.oncomplete = () => res();
+    tx.onabort = () => rej(tx.error);
+  });
+  db.close();
+  globalThis.__ojsRescue = blob;
+  return { hash, kept: !!blob };
+});
+check('the picture bytes were captured before removing the row', orphan.kept);
+
+await page.click('[data-act="library"]');
+await page.waitForSelector('.lib-card', { timeout: 10_000 });
+const flagged = await page.evaluate(() => {
+  const card = document.querySelector('.lib-card.orphaned');
+  return card
+    ? {
+        warn: !!card.querySelector('.lib-warn'),
+        relink: !!card.querySelector('.lib-relink'),
+        open: !!card.querySelector('.lib-open'),
+      }
+    : null;
+});
+check('a puzzle with no picture is flagged in the library', flagged?.warn === true);
+check('and is offered a relink instead of a dead Open button', flagged?.relink === true && flagged?.open === false);
+
+// Relinking with the wrong file must be refused: the pieces were cut from one exact file.
+const refused = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const record = app.session.record;
+  const wrong = new File([new Uint8Array([1, 2, 3, 4])], 'not-it.png', { type: 'image/png' });
+  await app.applyRelink(record, wrong);
+  return document.querySelector('.lib-note')?.textContent ?? '';
+});
+check('the wrong picture is refused', /not the picture/i.test(refused), refused.slice(0, 60));
+
+const healed = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const record = app.session.record;
+  const file = new File([globalThis.__ojsRescue], 'original.png', { type: 'image/png' });
+  await app.applyRelink(record, file);
+  return {
+    note: document.querySelector('.lib-note')?.textContent ?? '',
+    stillOrphaned: !!document.querySelector('.lib-card.orphaned'),
+  };
+});
+check('the right picture restores it', /restored/i.test(healed.note), healed.note.slice(0, 60));
+check('and the card stops being flagged', healed.stillOrphaned === false);
+await page.click('[data-act="close-library"]');
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

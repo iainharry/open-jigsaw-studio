@@ -63,6 +63,16 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
+/**
+ * Run one request and resolve when its **transaction commits**, not when the request
+ * succeeds.
+ *
+ * These are not the same moment. A request fires `onsuccess` while its transaction is
+ * still open, and the transaction can still abort afterwards — most importantly on a
+ * quota error, when the browser rolls the whole thing back. Resolving on `onsuccess`
+ * therefore reported a successful write for data that was never stored, which is exactly
+ * how a puzzle ends up listed in the library with its picture missing.
+ */
 function run<T>(
   storeName: string,
   mode: IDBTransactionMode,
@@ -72,10 +82,23 @@ function run<T>(
     (db) =>
       new Promise<T>((resolve, reject) => {
         const tx = db.transaction(storeName, mode);
+        let result: T | undefined;
         const req = fn(tx.objectStore(storeName));
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = () => {
+          result = req.result;
+        };
         req.onerror = () => reject(req.error ?? new Error('database request failed'));
-        tx.oncomplete = () => db.close();
+        tx.onabort = () => {
+          db.close();
+          reject(
+            tx.error ??
+              new Error('the change was rolled back — the browser may be out of storage space'),
+          );
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve(result as T);
+        };
       }),
   );
 }
@@ -92,6 +115,15 @@ export async function putImage(image: StoredImage): Promise<void> {
 
 export async function getImage(hash: string): Promise<StoredImage | undefined> {
   return run<StoredImage | undefined>(IMAGES, 'readonly', (s) => s.get(hash));
+}
+
+/**
+ * Every stored image hash. Used to tell, in one read, which library cards have lost
+ * their picture — asking per card would be one transaction per puzzle.
+ */
+export async function storedImageHashes(): Promise<Set<string>> {
+  const keys = await run<IDBValidKey[]>(IMAGES, 'readonly', (s) => s.getAllKeys());
+  return new Set(keys.filter((k): k is string => typeof k === 'string'));
 }
 
 export async function putPuzzle(record: PuzzleRecord): Promise<void> {

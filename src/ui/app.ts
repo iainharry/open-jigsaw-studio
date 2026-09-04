@@ -69,6 +69,7 @@ import {
   putImage,
   putPuzzle,
   setLastOpened,
+  storedImageHashes,
   type PuzzleRecord,
   type StoredImage,
 } from './storage.js';
@@ -500,7 +501,12 @@ export class App {
   private async useDemoImage(): Promise<void> {
     const canvas = makeDemoImage() as HTMLCanvasElement;
     const blob = await canvasToBlob(canvas);
-    await this.adoptImage(blob, 'Sample landscape');
+    try {
+      await this.adoptImage(blob, 'Sample landscape');
+    } catch (err) {
+      // Boot must not die on a storage failure: the sample puzzle is a convenience.
+      this.setStatus(`Could not start the sample puzzle: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -567,7 +573,16 @@ export class App {
       name,
       addedAt: Date.now(),
     };
-    await putImage(meta).catch(() => undefined);
+    // Deliberately not swallowed. If the picture does not reach storage, the puzzle
+    // record written a moment later will outlive it and the library gets a card that
+    // cannot be opened — better to refuse the import and say why.
+    try {
+      await putImage(meta);
+    } catch (err) {
+      throw new Error(
+        `the picture could not be saved (${(err as Error).message}), so the puzzle was not created`,
+      );
+    }
 
     this.closeSession();
     await this.startPuzzle(meta, bitmap, name, DEFAULT_EDIT);
@@ -1327,6 +1342,8 @@ export class App {
   private async openLibrary(): Promise<void> {
     await this.save();
     const records = await listPuzzles().catch(() => [] as PuzzleRecord[]);
+    // One read for the whole library rather than one per card.
+    const haveImage = await storedImageHashes().catch(() => null);
     const list = this.els.libList;
     list.innerHTML = '';
 
@@ -1345,6 +1362,9 @@ export class App {
         : pct > 0
           ? `${pct}% connected`
           : 'Not started';
+      // `null` means the check itself failed; only a definite miss is reported as one.
+      const orphaned = haveImage !== null && !haveImage.has(record.imageHash);
+      if (orphaned) card.classList.add('orphaned');
 
       card.innerHTML = `
         <div class="lib-thumb">${
@@ -1353,18 +1373,29 @@ export class App {
         <div class="lib-meta">
           <div class="lib-title"></div>
           <div class="lib-sub">${record.pieceCount} pieces · ${state}</div>
-          <div class="lib-sub">Last played ${formatWhen(record.lastPlayed)}</div>
+          <div class="lib-sub">${
+            orphaned
+              ? '<span class="lib-warn">Picture missing — relink it to open this puzzle</span>'
+              : `Last played ${formatWhen(record.lastPlayed)}`
+          }</div>
         </div>
         <div class="lib-actions">
-          <button class="btn lib-open">Open</button>
+          ${
+            orphaned
+              ? '<button class="btn on lib-relink" title="Choose the original picture file again. It must be the same file the puzzle was made from.">Relink picture…</button>'
+              : '<button class="btn lib-open">Open</button>'
+          }
           <button class="btn lib-export" title="Save as a .jigsaw file">Export</button>
           <button class="btn lib-delete" title="Delete this puzzle">Delete</button>
         </div>`;
       // Set the title as text, never as HTML: it is user input.
       card.querySelector<HTMLElement>('.lib-title')!.textContent = record.title;
 
-      card.querySelector<HTMLButtonElement>('.lib-open')!.addEventListener('click', () => {
+      card.querySelector<HTMLButtonElement>('.lib-open')?.addEventListener('click', () => {
         void this.openFromLibrary(record);
+      });
+      card.querySelector<HTMLButtonElement>('.lib-relink')?.addEventListener('click', () => {
+        this.relinkPicture(record);
       });
       card.querySelector<HTMLButtonElement>('.lib-export')!.addEventListener('click', () => {
         void this.exportPuzzle(record);
@@ -1504,12 +1535,82 @@ export class App {
     this.els.library.hidden = true;
   }
 
+  /**
+   * A failure here used to be reported as "its image is missing" whatever went wrong,
+   * which was a guess dressed as a diagnosis. The three cases are genuinely different and
+   * only one of them is recoverable, so they are told apart before anything is said.
+   */
   private async openFromLibrary(record: PuzzleRecord): Promise<void> {
     this.closeLibrary();
     if (this.session?.record.id === record.id) return;
-    const ok = await this.openRecord(record).catch(() => false);
-    if (!ok) this.setStatus(`Could not reopen “${record.title}” — its image is missing.`);
-    else setLastOpened(record.id);
+    try {
+      if (await this.openRecord(record)) {
+        setLastOpened(record.id);
+        return;
+      }
+      const meta = await getImage(record.imageHash).catch(() => undefined);
+      this.setStatus(
+        meta
+          ? `Could not reopen “${record.title}” — its saved progress is unreadable.`
+          : `Could not reopen “${record.title}” — its picture is no longer in storage. ` +
+            `Open My puzzles and press Relink picture… to point it back at the original file.`,
+      );
+    } catch (err) {
+      this.setStatus(`Could not reopen “${record.title}”: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Give an orphaned puzzle its picture back.
+   *
+   * Images are keyed by the SHA-256 of their bytes, which makes this exact rather than a
+   * guess: the chosen file either hashes to what the puzzle is asking for or it does not,
+   * and if it does the record simply starts working again with its progress intact.
+   */
+  private relinkPicture(record: PuzzleRecord): void {
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = 'image/*';
+    picker.addEventListener('change', () => {
+      const file = picker.files?.[0];
+      if (file) void this.applyRelink(record, file);
+    });
+    picker.click();
+  }
+
+  private async applyRelink(record: PuzzleRecord, file: File): Promise<void> {
+    this.setLibraryNote('Checking that picture…');
+    try {
+      const hash = await hashBlob(file);
+      if (hash !== record.imageHash) {
+        this.setLibraryNote(
+          `That is not the picture “${record.title}” was made from. The pieces were cut ` +
+            `from one exact file, so a resaved or edited copy will not fit — it has to be ` +
+            `the original.`,
+        );
+        return;
+      }
+
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      // The stored dimensions have to be the ones the puzzle was cut against, which for a
+      // photograph over the import cap is the downscaled size, not the file's own. Get
+      // this wrong and the picture reopens at a different scale from its pieces.
+      const longest = Math.max(bitmap.width, bitmap.height);
+      const scale = longest > MAX_IMAGE_EDGE ? MAX_IMAGE_EDGE / longest : 1;
+      await putImage({
+        hash,
+        blob: file,
+        width: Math.round(bitmap.width * scale),
+        height: Math.round(bitmap.height * scale),
+        name: file.name.replace(/\.[^.]+$/, ''),
+        addedAt: Date.now(),
+      });
+      bitmap.close();
+      this.setLibraryNote(`Picture restored — “${record.title}” will open again.`);
+      await this.openLibrary();
+    } catch (err) {
+      this.setLibraryNote(`Could not relink that picture: ${(err as Error).message}`);
+    }
   }
 
   private async deleteFromLibrary(record: PuzzleRecord, button: HTMLButtonElement): Promise<void> {

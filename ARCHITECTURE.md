@@ -1,7 +1,7 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M5 (engine, selection, rotation, library, trays,
-colour sorting, and shipping).
+Status of this document: covers M1 to M6 (engine, selection, rotation, library, trays,
+colour sorting, shipping, and image preparation).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -19,7 +19,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 100 current tests run headless in about 1.5 seconds. If engine code ever needs jsdom, the
+All 128 current tests run headless in about 1.5 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -471,6 +471,34 @@ reader given a cropped puzzle would lay pieces cut from the prepared picture ove
 uncropped original and put every one of them in the wrong place; refusing the file is
 better than showing nonsense. Unedited puzzles still claim v1, so ordinary files stay
 openable by older builds.
+
+### A write is not saved until its transaction commits
+
+Reported from real use: a puzzle listed in the library that would not open, saying its
+image was missing. It was.
+
+`run()` resolved its promise on the *request's* `onsuccess`, which fires while the
+transaction is still open. A transaction can abort afterwards — a quota error rolls the
+whole thing back — so a write could report success for data that was never stored. The
+image write in `adoptImage()` was additionally `.catch()`-ed to nothing, and the puzzle
+record was written straight after, so the failure mode was a record outliving its picture
+with no complaint anywhere.
+
+Three changes. Writes now resolve on `tx.oncomplete` and reject on `tx.onabort`. The image
+write is no longer swallowed: if the picture cannot be stored, the import fails and says
+so, rather than producing a puzzle that cannot be opened. And the library reports the
+condition on the card rather than only on pressing Open.
+
+**Recovery is exact, not a guess.** Images are keyed by the SHA-256 of their bytes, so
+**Relink picture…** can simply hash the file offered and compare: it either is the picture
+the puzzle was cut from or it is not. If it is, the record starts working again with its
+progress intact; if it is not, the puzzle says so instead of half-working. This is the
+content-hash design paying for itself a second time.
+
+The old error message deserves a note of its own. `openFromLibrary()` caught every failure
+and reported "its image is missing" regardless of cause — a guess dressed as a diagnosis,
+and it would have said the same thing if the saved progress were corrupt or the renderer
+had thrown. The three cases are now told apart before anything is said.
 
 ## 18. Known limitations after M2
 
