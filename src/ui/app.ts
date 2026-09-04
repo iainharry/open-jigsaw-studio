@@ -503,10 +503,15 @@ export class App {
     await this.adoptImage(blob, 'Sample landscape');
   }
 
-  /** Release both bitmaps a session owns. Forgetting the original leaks a whole photo. */
+  /**
+   * Release the bitmaps a session owns.
+   *
+   * `image` and `original` are the *same object* on an unedited puzzle, which is the
+   * common case, so the distinct-object check is what stops a double close.
+   */
   private closeSession(): void {
     if (!this.session) return;
-    this.session.image.close();
+    if (this.session.image !== this.session.original) this.session.image.close();
     this.session.original.close();
     this.session = null;
   }
@@ -514,11 +519,15 @@ export class App {
   /**
    * The picture a puzzle is actually cut from.
    *
-   * Always a distinct bitmap, even when nothing was changed, so closing one session's
-   * working image can never close the original underneath it.
+   * Returns the original itself when there is nothing to apply. Copying it instead would
+   * be tidier — every session would own two independent bitmaps — but it would also hold
+   * a second full-size decode of every photograph for the overwhelming majority of
+   * puzzles, which have no edit at all. At the 5000px import cap that is another ~66 MB
+   * of RGBA per session, on hardware where the bake cache is already budgeted at 96 MB.
+   * The alias is cheap; the ownership rule lives in `closeSession()`.
    */
   private async deriveImage(original: ImageBitmap, edit: ImageEdit): Promise<ImageBitmap> {
-    if (isUneditedImage(edit)) return createImageBitmap(original);
+    if (isUneditedImage(edit)) return original;
     const out = await renderEdited(original, original.width, original.height, edit, MAX_IMAGE_EDGE);
     return out.bitmap;
   }
@@ -697,12 +706,13 @@ export class App {
 
   private async newPuzzle(): Promise<void> {
     if (!this.session) return void this.useDemoImage();
-    const { imageMeta, original, record, edit } = this.session;
-    // Reuse the already-decoded bitmap rather than re-reading it from storage. The clone
-    // is taken before the old session is closed, since closing releases the original.
-    const clone = await createImageBitmap(original);
-    this.closeSession();
-    await this.startPuzzle(imageMeta, clone, record.title, edit);
+    const { imageMeta, original, image, record, edit } = this.session;
+    // The original is handed straight to the next puzzle rather than copied: decoding a
+    // 5000px photograph twice to cut the same picture again would be pure waste. Only
+    // the derived working image, which is about to be rebuilt, is released.
+    if (image !== original) image.close();
+    this.session = null;
+    await this.startPuzzle(imageMeta, original, record.title, edit);
   }
 
   /**
@@ -730,10 +740,12 @@ export class App {
       return;
     }
 
-    const clone = await createImageBitmap(original);
+    // Same ownership handover as `newPuzzle()`: the original carries across untouched.
     const title = record.title;
-    this.closeSession();
-    await this.startPuzzle(imageMeta, clone, title, next);
+    const stale = this.session?.image;
+    if (stale && stale !== original) stale.close();
+    this.session = null;
+    await this.startPuzzle(imageMeta, original, title, next);
   }
 
   private shuffle(): void {
@@ -1403,7 +1415,7 @@ export class App {
         // to show the prepared version — otherwise a cropped puzzle previews uncropped.
         const shown = await this.deriveImage(bitmap, record.edit ?? DEFAULT_EDIT);
         record.thumbnail = makeThumbnail(shown, shown.width, shown.height);
-        shown.close();
+        if (shown !== bitmap) shown.close();
         bitmap.close();
       } catch {
         /* an unreadable picture still imports; the card just shows no preview */
