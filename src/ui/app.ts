@@ -11,6 +11,7 @@ import {
   chooseGrid,
   createPuzzle,
   deserialize,
+  borderPieceIds,
   edgeClusters,
   generateGeometry,
   DEFAULT_EDIT,
@@ -18,6 +19,7 @@ import {
   type ImageEdit,
   groupByColour,
   liveMembers,
+  neighbourClusters,
   oklabToRgb,
   type ColourGroup,
   isComplete,
@@ -116,6 +118,8 @@ export class App {
   private viewport: Viewport = { x: 0, y: 0, zoom: 1 };
   private dirty = true;
   private saveTimer: number | null = null;
+  /** True once a save has failed, so the warning is given once rather than every autosave. */
+  private saveFailed = false;
   private playingSince = performance.now();
 
   private els!: {
@@ -143,6 +147,9 @@ export class App {
     swatch: HTMLElement;
     importFile: HTMLInputElement;
     libNote: HTMLElement;
+    ghost: HTMLInputElement;
+    hints: HTMLButtonElement;
+    edgesOnly: HTMLButtonElement;
   };
 
   /** Folder that receives a .jigsaw copy on every save, if one has been chosen. */
@@ -168,6 +175,10 @@ export class App {
 
   /** Cluster ids the player has selected. Interaction state, never saved. */
   private readonly selection = new Set<number>();
+  /** Assistance: outline the neighbours of whatever is selected. */
+  private hintsOn = false;
+  /** Assistance: hide every piece that is not part of the border. */
+  private edgesOnly = false;
   private tool: Tool = 'move';
   private refMode: RefMode = 'off';
   private refSize = 300;
@@ -189,7 +200,7 @@ export class App {
         this.dirty = true;
       },
       onSelectionChange: () => {
-        this.renderer.selection = this.selection;
+        this.syncSelection();
         this.updateStatus();
         this.dirty = true;
       },
@@ -207,7 +218,7 @@ export class App {
         this.beginTrayRename(trayId);
       },
     });
-    this.renderer.selection = this.selection;
+    this.syncSelection();
 
     // Restore the reference panel layout from last time.
     try {
@@ -311,6 +322,14 @@ export class App {
             <button class="btn rot" data-act="rotl" data-help="Turn the selected pieces a quarter turn anticlockwise. Needs Rotation switched on. Keyboard: Shift+R" title="Rotate selection anticlockwise (Shift+R)">&#8634;</button>
             <button class="btn rot" data-act="rotr" data-help="Turn the selected pieces a quarter turn clockwise. Needs Rotation switched on. Keyboard: R" title="Rotate selection clockwise (R)">&#8635;</button>
           </span>
+          <span class="divider"></span>
+          <span class="group">
+            <label class="field" data-help="Show the finished picture faintly on the board, to lay pieces over. Drag left for no help at all; drag right to make it clearer.">Ghost
+              <input type="range" class="ghost" min="0" max="45" step="1" value="0" />
+            </label>
+            <button class="btn" data-act="hints" data-help="Outline the pieces that belong beside whatever you have selected. It shows you where to look; it does not place anything for you.">Hints</button>
+            <button class="btn" data-act="edges-only" data-help="Hide every piece that is not part of the border, so you can build the frame without the rest in the way. Nothing is lost — switch it off to bring them back.">Edges only</button>
+          </span>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           <span class="spacer"></span>
           <span class="status"></span>
@@ -369,6 +388,9 @@ export class App {
       swatch: q<HTMLElement>('.swatch'),
       importFile: q<HTMLInputElement>('.import-file'),
       libNote: q<HTMLElement>('.lib-note'),
+      ghost: q<HTMLInputElement>('.ghost'),
+      hints: q<HTMLButtonElement>('[data-act="hints"]'),
+      edgesOnly: q<HTMLButtonElement>('[data-act="edges-only"]'),
     };
     this.setupHelp();
 
@@ -383,6 +405,8 @@ export class App {
     this.root.addEventListener('click', (e) => {
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
       if (act === 'new') void this.newPuzzle();
+      else if (act === 'hints') this.toggleHints();
+      else if (act === 'edges-only') this.toggleEdgesOnly();
       else if (act === 'prepare') void this.prepareImage();
       else if (act === 'shuffle') this.shuffle();
       else if (act === 'fit-board') this.fitBoard();
@@ -405,6 +429,27 @@ export class App {
       else if (act === 'rotl') this.input.rotateSelection(-Math.PI / 2);
       else if (act === 'rotr') this.input.rotateSelection(Math.PI / 2);
     });
+
+    this.els.ghost.addEventListener('input', () => {
+      // The slider tops out at 45% deliberately. Past roughly that the board reads as the
+      // finished picture with pieces scattered on it, and placing a piece stops being a
+      // judgement about the picture -- it becomes tracing.
+      this.setGhost(Number(this.els.ghost.value));
+      try {
+        localStorage.setItem('ojs:ghost', this.els.ghost.value);
+      } catch {
+        /* storage disabled; the ghost simply starts off next time */
+      }
+    });
+    try {
+      const saved = localStorage.getItem('ojs:ghost');
+      if (saved !== null) {
+        this.els.ghost.value = saved;
+        this.setGhost(Number(saved));
+      }
+    } catch {
+      /* storage disabled; start with no ghost */
+    }
 
     this.els.rotateOn.addEventListener('change', () => {
       if (!this.session) return;
@@ -642,6 +687,7 @@ export class App {
     this.renderer.setImage(image, image.width, image.height);
     this.els.title.value = title;
     this.activeTray = null;
+    this.reapplyAssistance();
     this.updateRotationUi();
     this.refreshTrayUi();
     this.drawReference();
@@ -702,6 +748,7 @@ export class App {
     );
     this.clearSelection();
     this.activeTray = null;
+    this.reapplyAssistance();
     this.updateRotationUi();
     this.refreshTrayUi();
     // Records written before thumbnails existed get one now, so the library is not
@@ -861,10 +908,101 @@ export class App {
     for (const btn of this.root.querySelectorAll<HTMLButtonElement>('.rot')) btn.disabled = !on;
   }
 
+  /**
+   * Push the selection to the renderer, and recompute the hint outlines with it.
+   *
+   * Hints are derived from the selection rather than tracked separately, so they cannot
+   * drift out of step with it: every path that changes what is selected comes through
+   * here, and there is no second place to forget.
+   */
+  private syncSelection(): void {
+    this.renderer.selection = this.selection;
+    this.refreshHints();
+  }
+
+  /**
+   * Re-derive the assistance state for a newly opened puzzle.
+   *
+   * The border-piece set belongs to one puzzle's geometry, so carrying it across to
+   * another would hide the wrong pieces. The switches themselves stay as the user left
+   * them — having to turn hints back on for every puzzle would be its own annoyance.
+   */
+  private reapplyAssistance(): void {
+    this.renderer.onlyPieces =
+      this.edgesOnly && this.session ? borderPieceIds(this.session.state) : null;
+    this.els.edgesOnly.classList.toggle('on', this.edgesOnly);
+    this.els.hints.classList.toggle('on', this.hintsOn);
+    this.refreshHints();
+  }
+
+  private refreshHints(): void {
+    if (!this.hintsOn || !this.session) {
+      this.renderer.hintClusters = null;
+      return;
+    }
+    const ids = new Set<number>();
+    for (const clusterId of this.selection) {
+      for (const id of neighbourClusters(this.session.state, clusterId)) ids.add(id);
+    }
+    this.renderer.hintClusters = ids;
+  }
+
+  /**
+   * Hints outline the clusters that belong beside the selection.
+   *
+   * Deliberately tied to a selection rather than shown for everything at once: outlining
+   * every neighbour of every piece would light up the whole board and tell you nothing.
+   * You ask about the piece in your hand.
+   */
+  private toggleHints(): void {
+    this.hintsOn = !this.hintsOn;
+    this.els.hints.classList.toggle('on', this.hintsOn);
+    this.refreshHints();
+    this.dirty = true;
+    if (!this.hintsOn) this.setStatus('Hints off.');
+    else if (this.selection.size === 0) {
+      this.setStatus('Hints on — select a piece and its neighbours will be outlined.');
+    } else {
+      this.setStatus(`Hints on — ${this.renderer.hintClusters?.size ?? 0} neighbours outlined.`);
+    }
+  }
+
+  /**
+   * Edges-only hides every interior piece.
+   *
+   * Nothing is moved or lost: it is a display filter over the same state, so switching it
+   * off brings everything back exactly where it was. The pieces are made ungrabbable as
+   * well as invisible, since an invisible piece that still catches the pointer is worse
+   * than no filter at all.
+   */
+  private toggleEdgesOnly(): void {
+    if (!this.session) return;
+    this.edgesOnly = !this.edgesOnly;
+    this.els.edgesOnly.classList.toggle('on', this.edgesOnly);
+    if (this.edgesOnly) {
+      const border = borderPieceIds(this.session.state);
+      this.renderer.onlyPieces = border;
+      // A selection may contain interior pieces that are about to vanish; keeping it
+      // would let a rotate or a drag act on pieces that cannot be seen.
+      this.clearSelection();
+      const total = this.session.state.geometry.pieces.length;
+      this.setStatus(`Edges only — showing ${border.size} border pieces of ${total}.`);
+    } else {
+      this.renderer.onlyPieces = null;
+      this.setStatus('Showing every piece again.');
+    }
+    this.dirty = true;
+  }
+
+  private setGhost(percent: number): void {
+    this.renderer.ghost = Math.min(45, Math.max(0, percent)) / 100;
+    this.dirty = true;
+  }
+
   private clearSelection(): void {
     if (this.selection.size === 0) return;
     this.selection.clear();
-    this.renderer.selection = this.selection;
+    this.syncSelection();
     this.dirty = true;
   }
 
@@ -1139,7 +1277,7 @@ export class App {
     const ids = edgeClusters(this.session.state);
     this.selection.clear();
     for (const id of ids) this.selection.add(id);
-    this.renderer.selection = this.selection;
+    this.syncSelection();
     this.updateStatus();
     this.dirty = true;
     this.setStatus(
@@ -1216,7 +1354,7 @@ export class App {
 
     this.selection.clear();
     for (const id of members) this.selection.add(id);
-    this.renderer.selection = this.selection;
+    this.syncSelection();
     this.dirty = true;
 
     const [r, g, b] = oklabToRgb(group.centre);
@@ -1638,6 +1776,15 @@ export class App {
 
   // --- Saving ---------------------------------------------------------------
 
+  /**
+   * A failed save must be visible.
+   *
+   * This is the most important write in the application — an autosave failing quietly
+   * means losing hours of a 2,000-piece puzzle and being told nothing. It used to be
+   * `.catch(() => undefined)`, the same swallow that let a puzzle outlive its picture.
+   * The failure is now reported, and reported once rather than every twenty seconds,
+   * because a storage problem does not fix itself between autosaves.
+   */
   private async save(): Promise<void> {
     if (!this.session) return;
     const { record, state } = this.session;
@@ -1648,7 +1795,22 @@ export class App {
     record.lastPlayed = Date.now();
     record.progress = progress(state);
     if (isComplete(state) && record.completedAt === null) record.completedAt = Date.now();
-    await putPuzzle(record).catch(() => undefined);
+
+    try {
+      await putPuzzle(record);
+      if (this.saveFailed) {
+        this.saveFailed = false;
+        this.setStatus('Saving again — your progress is stored.');
+      }
+    } catch (err) {
+      if (!this.saveFailed) {
+        this.saveFailed = true;
+        this.setStatus(
+          `Your progress is NOT being saved: ${(err as Error).message}. ` +
+            `Use Export in My puzzles to save this puzzle to a file before closing.`,
+        );
+      }
+    }
     void this.writeBackupCopy();
   }
 

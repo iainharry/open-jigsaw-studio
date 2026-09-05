@@ -530,6 +530,56 @@ export function edgeClusters(
   return [...found];
 }
 
+/**
+ * The clusters that belong next to a given one.
+ *
+ * A hint, not an answer. It says *which pieces go beside this one*, leaving you to find
+ * them and place them — the difference between a puzzle made easier and a puzzle solved
+ * for you. The information is already in the geometry, so this is a lookup rather than a
+ * search: a piece knows its four neighbouring piece ids, and each piece knows its cluster.
+ *
+ * The cluster itself is excluded, so a partly assembled group reports only what it is
+ * still missing. Pieces already joined to it are, by definition, not a hint.
+ */
+export function neighbourClusters(state: PuzzleState, clusterId: number): number[] {
+  const cluster = state.clusters.get(clusterId);
+  if (!cluster) return [];
+
+  const found = new Set<number>();
+  for (const pieceId of cluster.pieces) {
+    const piece = state.geometry.pieces[pieceId];
+    if (!piece) continue;
+    for (const side of SIDES) {
+      const neighbourId = piece.neighbours[side];
+      if (neighbourId < 0) continue;
+      const other = state.clusterOfPiece[neighbourId];
+      if (other === undefined || other === clusterId) continue;
+      if (state.clusters.has(other)) found.add(other);
+    }
+  }
+  return [...found];
+}
+
+/**
+ * Piece ids that sit on the border of the picture.
+ *
+ * `edgeClusters` answers "which groups contain an edge piece", which is the right
+ * question for selecting them. Edges-only *display* needs the finer question — which
+ * individual pieces are border pieces — because a cluster may hold both.
+ */
+export function borderPieceIds(state: PuzzleState): Set<number> {
+  const ids = new Set<number>();
+  for (const piece of state.geometry.pieces) {
+    for (const side of SIDES) {
+      if (piece.neighbours[side] < 0) {
+        ids.add(piece.id);
+        break;
+      }
+    }
+  }
+  return ids;
+}
+
 /** Assign or clear a user-visible name on a cluster. The hook for named groups. */
 export function nameCluster(state: PuzzleState, clusterId: number, name: string | null): void {
   const cluster = state.clusters.get(clusterId);

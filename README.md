@@ -56,7 +56,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 128 headless engine tests, ~1.5 s |
+| `npm test` | 138 headless engine tests, ~1.5 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -113,6 +113,23 @@ Every control in the toolbar explains itself. Point at it with a mouse and a sho
 description appears. On a tablet there is no hover, so press **?** to enter help mode and
 tap any control to read what it does instead of pressing it — Esc, or **?** again, to
 leave. There is deliberately no separate user guide to fall out of date.
+
+## Getting help with a puzzle
+
+Three aids in the toolbar, all off unless you turn them on, and each independent — you can
+have one without the others.
+
+**Ghost** fades the finished picture onto the board to lay pieces over. The slider stops
+at 45% on purpose: any stronger and you are tracing rather than solving.
+
+**Hints** outlines the pieces that belong beside whatever you have selected. Select a
+piece, and its neighbours light up in amber — it tells you where to look, not where to
+put things. It follows the selection, so it answers a question about the piece in your
+hand rather than lighting up the whole board.
+
+**Edges only** hides every piece that is not part of the border, so you can build the
+frame in peace. Nothing is moved or lost; switch it off and everything comes back exactly
+where it was.
 
 ## Trays
 
@@ -208,10 +225,12 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 ## Roadmap
 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
-edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), and
-image preparation. Next: library depth (tags, search, notes, difficulty, completion
-history) and assistance levels (ghost image, likely-neighbour hints, edges-only mode).
-`ARCHITECTURE.md` §18 lists what is deliberately not built.
+edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
+preparation, and assistance levels. Next: notes, difficulty and completion history, then
+the unbuilt half of the original brief — autosave interval, appearance, sharing.
+Deliberately deferred: tags and search, which solve a problem a five-puzzle library does
+not have.
+`ARCHITECTURE.md` §19 lists what is deliberately not built.
 
 ## Licence
 

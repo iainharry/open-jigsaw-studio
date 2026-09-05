@@ -1,7 +1,7 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M6 (engine, selection, rotation, library, trays,
-colour sorting, shipping, and image preparation).
+Status of this document: covers M1 to M7 (engine, selection, rotation, library, trays,
+colour sorting, shipping, image preparation, and assistance levels).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -19,7 +19,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 128 current tests run headless in about 1.5 seconds. If engine code ever needs jsdom, the
+All 138 current tests run headless in about 1.5 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -500,7 +500,41 @@ and reported "its image is missing" regardless of cause — a guess dressed as a
 and it would have said the same thing if the saved progress were corrupt or the renderer
 had thrown. The three cases are now told apart before anything is said.
 
-## 18. Known limitations after M2
+## 18. Assistance levels
+
+Three aids, all off by default, each its own switch. Not one difficulty dial: how much
+help a puzzle should give is a matter of taste and of the day, and collapsing that into
+"easy / normal / hard" would mean deciding on the player's behalf which kinds of help go
+together.
+
+**The ghost** paints the finished picture on the board at up to 45% opacity, under every
+piece. The cap is the whole design decision. Past roughly that the board reads as the
+finished picture with pieces scattered on it, and placing a piece stops being a judgement
+about the picture — it becomes tracing. The slider goes to 45 and no further.
+
+**Hints** outline the clusters that belong beside the selection. Two decisions: it is a
+hint rather than an answer — it says which pieces go next to this one, leaving you to find
+and place them — and it is tied to a *selection* rather than shown for everything at once,
+because outlining every neighbour of every piece lights up the whole board and tells you
+nothing. `neighbourClusters()` is a lookup, not a search: the geometry already records
+each piece's four neighbours, and each piece knows its cluster. Hints are derived from the
+selection inside `syncSelection()` rather than tracked alongside it, so the two cannot
+drift apart.
+
+**Edges only** hides every piece that is not on the border, for building the frame without
+five hundred interior pieces in the way. It is a display filter over unchanged state, so
+switching it off restores everything exactly where it was — nothing is moved, trayed or
+lost. Hidden pieces are made ungrabbable as well as invisible: an invisible piece that
+still catches the pointer is worse than no filter at all, and the smoke test asserts
+specifically that an interior piece fails a hit test while hidden. Turning it on clears
+the selection, since a selection holding pieces you cannot see would let a rotate or a
+drag act on them blind.
+
+The border-piece set belongs to one puzzle's geometry, so it is re-derived when a puzzle
+opens. The switches themselves persist, because having to turn hints back on for every
+puzzle would be its own annoyance.
+
+## 19. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

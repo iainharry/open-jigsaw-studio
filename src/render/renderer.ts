@@ -69,6 +69,25 @@ export class Renderer {
   /** Tray highlighted because it is selected, or because a drag is hovering over it. */
   selectedTray: number | null = null;
 
+  // --- Assistance ------------------------------------------------------------
+  // Three optional aids, all off by default. Each is a separate switch on purpose:
+  // how much help a puzzle should give is a matter of taste and of the day, not a
+  // single difficulty dial someone else gets to define.
+
+  /** Opacity of the solved picture shown faintly on the board. 0 disables it. */
+  ghost = 0;
+  /** Clusters that belong beside the selection, outlined in the hint colour. */
+  hintClusters: ReadonlySet<number> | null = null;
+  hintColour = '#e8b45f';
+  /**
+   * When set, only these pieces are drawn or grabbable — the border pieces, for working
+   * the frame first without five hundred interior pieces in the way. Hiding without
+   * also making them ungrabbable would leave invisible pieces to snag the pointer.
+   */
+  onlyPieces: ReadonlySet<number> | null = null;
+  /** Kept so the ghost can be painted; the bake cache owns it for rasterising. */
+  private source: CanvasImageSource | null = null;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     options: RendererOptions = {},
@@ -91,6 +110,7 @@ export class Renderer {
   }
 
   setImage(image: CanvasImageSource, width: number, height: number): void {
+    this.source = image;
     this.bakeCache.setSource(image, width, height);
   }
 
@@ -151,6 +171,23 @@ export class Renderer {
         state.geometry.imageWidth * vp.zoom,
         state.geometry.imageHeight * vp.zoom,
       );
+
+      // The ghost: the finished picture, faintly, exactly where it belongs. Painted
+      // inside the board block so it lands on the board and under every piece — a guide
+      // to lay pieces over, not a layer competing with them.
+      if (this.ghost > 0 && this.source) {
+        ctx.save();
+        ctx.globalAlpha = this.ghost;
+        ctx.imageSmoothingQuality = 'low';
+        ctx.drawImage(
+          this.source,
+          tl.x,
+          tl.y,
+          state.geometry.imageWidth * vp.zoom,
+          state.geometry.imageHeight * vp.zoom,
+        );
+        ctx.restore();
+      }
     }
 
     const view = visibleWorldRect(vp, size, 64);
@@ -189,6 +226,10 @@ export class Renderer {
 
       const visible: number[] = [];
       for (const pieceId of cluster.pieces) {
+        if (this.onlyPieces && !this.onlyPieces.has(pieceId)) {
+          culled++;
+          continue;
+        }
         const piece = state.geometry.pieces[pieceId]!;
         const wb = pieceWorldBounds(cluster, piece);
         if (wb.maxX < view.minX || wb.minX > view.maxX || wb.maxY < view.minY || wb.minY > view.maxY) {
@@ -208,12 +249,16 @@ export class Renderer {
         drawn++;
       }
 
-      // Outline the selection last, so a piece's own edge never paints over it.
-      if (selected && visible.length > 0) {
+      // Outline the selection last, so a piece's own edge never paints over it. A hint
+      // outline uses the same mechanism in a different colour; selection wins if a
+      // cluster is somehow both, since that is the one the user is acting on.
+      const hinted = !selected && (this.hintClusters?.has(clusterId) ?? false);
+      if ((selected || hinted) && visible.length > 0) {
         ctx.shadowColor = 'transparent';
-        ctx.strokeStyle = this.selectionColour;
+        ctx.strokeStyle = selected ? this.selectionColour : this.hintColour;
         ctx.lineWidth = 2.5 / vp.zoom;
         ctx.lineJoin = 'round';
+        if (hinted) ctx.setLineDash([7 / vp.zoom, 5 / vp.zoom]);
         for (const pieceId of visible) {
           const piece = state.geometry.pieces[pieceId]!;
           ctx.save();
@@ -221,6 +266,7 @@ export class Renderer {
           ctx.stroke(this.pathFor(piece));
           ctx.restore();
         }
+        ctx.setLineDash([]);
       }
 
       ctx.restore();
@@ -346,6 +392,9 @@ export class Renderer {
       if (isHidden(state, cluster.id)) continue;
       const local = toSolved(cluster, world);
       for (const pieceId of cluster.pieces) {
+        // Not drawn means not grabbable, at piece level too — otherwise edges-only mode
+        // leaves invisible interior pieces snagging the pointer.
+        if (this.onlyPieces && !this.onlyPieces.has(pieceId)) continue;
         const piece = state.geometry.pieces[pieceId]!;
         const px = local.x - piece.bounds.x;
         const py = local.y - piece.bounds.y;

@@ -5,10 +5,12 @@ import {
   clusterWorldBounds,
   clustersIntersecting,
   createPuzzle,
+  borderPieceIds,
   edgeClusters,
   mergeClusters,
   moveCluster,
   moveClusters,
+  neighbourClusters,
   pieceWorldOrigin,
   quantiseClusterRotations,
   releaseClusters,
@@ -228,5 +230,75 @@ describe('selectionCentre', () => {
 
   it('is null for an empty selection', () => {
     expect(selectionCentre(puzzle(), [])).toBeNull();
+  });
+});
+
+describe('neighbourClusters', () => {
+  it('gives the four neighbours of an interior piece', () => {
+    const s = puzzle(5, 5);
+    // Piece 12 is the centre of a 5x5 grid.
+    const ids = neighbourClusters(s, clusterOf(s, 12).id);
+    expect(ids).toHaveLength(4);
+  });
+
+  it('gives two for a corner and three for an edge', () => {
+    const s = puzzle(5, 5);
+    expect(neighbourClusters(s, clusterOf(s, 0).id)).toHaveLength(2);
+    expect(neighbourClusters(s, clusterOf(s, 2).id)).toHaveLength(3);
+  });
+
+  it('never includes the cluster itself', () => {
+    const s = puzzle(4, 4);
+    const joined = mergeClusters(s, clusterOf(s, 0).id, clusterOf(s, 1).id);
+    const ids = neighbourClusters(s, joined ?? clusterOf(s, 0).id);
+    expect(ids).not.toContain(clusterOf(s, 0).id);
+  });
+
+  it('reports only what a joined group is still missing', () => {
+    const s = puzzle(4, 4);
+    // Pieces 0 and 1 together have neighbours 2 (right of 1), 4 (below 0), 5 (below 1).
+    mergeClusters(s, clusterOf(s, 0).id, clusterOf(s, 1).id);
+    const ids = neighbourClusters(s, clusterOf(s, 0).id);
+    expect(new Set(ids)).toEqual(
+      new Set([clusterOf(s, 2).id, clusterOf(s, 4).id, clusterOf(s, 5).id]),
+    );
+  });
+
+  it('deduplicates a neighbour touching the group on two sides', () => {
+    const s = puzzle(3, 3);
+    // 0 and 1 both touch the cluster holding 3 and 4, which must appear once.
+    mergeClusters(s, clusterOf(s, 0).id, clusterOf(s, 1).id);
+    mergeClusters(s, clusterOf(s, 3).id, clusterOf(s, 4).id);
+    const ids = neighbourClusters(s, clusterOf(s, 0).id);
+    const target = clusterOf(s, 3).id;
+    expect(ids.filter((id) => id === target)).toHaveLength(1);
+  });
+
+  it('is empty for a cluster that does not exist', () => {
+    expect(neighbourClusters(puzzle(3, 3), 9999)).toEqual([]);
+  });
+
+  it('is empty once every piece is one cluster', () => {
+    const s = puzzle(2, 2);
+    let id = clusterOf(s, 0).id;
+    for (const other of [1, 2, 3]) id = mergeClusters(s, id, clusterOf(s, other).id) ?? id;
+    expect(neighbourClusters(s, id)).toEqual([]);
+  });
+});
+
+describe('borderPieceIds', () => {
+  it('is every piece on the outside of the grid', () => {
+    const s = puzzle(5, 6);
+    expect(borderPieceIds(s).size).toBe(18);
+  });
+
+  it('is every piece of a single row', () => {
+    const s = puzzle(1, 4);
+    expect(borderPieceIds(s).size).toBe(4);
+  });
+
+  it('excludes the interior', () => {
+    const s = puzzle(5, 5);
+    expect(borderPieceIds(s).has(12)).toBe(false);
   });
 });

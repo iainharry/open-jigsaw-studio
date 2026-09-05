@@ -618,3 +618,9 @@ body {
 .lib-warn {
   color: #e8b45f;
 }
+
+/* The ghost slider sits in the toolbar, so it has to stay narrow. */
+.field input[type='range'].ghost {
+  width: 70px;
+  vertical-align: middle;
+}

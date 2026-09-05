@@ -792,6 +792,80 @@ check('the right picture restores it', /restored/i.test(healed.note), healed.not
 check('and the card stops being flagged', healed.stillOrphaned === false);
 await page.click('[data-act="close-library"]');
 
+// 10. Assistance levels: ghost, neighbour hints, edges only.
+const ghostEffect = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const canvas = document.querySelector('.board');
+  const ctx = canvas.getContext('2d');
+  // Sample a patch of bare board -- inside the picture area but away from the scatter
+  // ring, so any change there is the ghost and not a piece.
+  const sample = () => {
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4 * 31) total += data[i] + data[i + 1] + data[i + 2];
+    return total;
+  };
+  app.renderer.ghost = 0;
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const off = sample();
+  app.renderer.ghost = 0.45;
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const on = sample();
+  app.renderer.ghost = 0;
+  app.dirty = true;
+  return { off, on };
+});
+check('the ghost changes what is painted', ghostEffect.on !== ghostEffect.off);
+
+const hints = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const state = app.session.state;
+  // Select one loose single-piece cluster and ask for its neighbours.
+  const single = [...state.clusters.values()].find((c) => c.pieces.length === 1);
+  app.selection.clear();
+  app.selection.add(single.id);
+  app.syncSelection();
+  const before = app.renderer.hintClusters?.size ?? null;
+  app.toggleHints();
+  const after = app.renderer.hintClusters?.size ?? null;
+  const pieceId = single.pieces[0];
+  const piece = state.geometry.pieces[pieceId];
+  const realNeighbours = [piece.neighbours.top, piece.neighbours.right, piece.neighbours.bottom, piece.neighbours.left].filter((n) => n >= 0).length;
+  return { before, after, realNeighbours, selfIncluded: app.renderer.hintClusters?.has(single.id) ?? false };
+});
+check('hints are off until asked for', hints.before === null);
+check('hints outline exactly the neighbours of the selection', hints.after === hints.realNeighbours, `${hints.after} outlined, ${hints.realNeighbours} neighbours`);
+check('hints never include the selection itself', hints.selfIncluded === false);
+
+const edgesOnly = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const total = app.session.state.geometry.pieces.length;
+  app.toggleEdgesOnly();
+  const shown = app.renderer.onlyPieces?.size ?? null;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const drawnWhenFiltered = app.renderer.stats.piecesDrawn;
+  // An interior piece must not be grabbable while it is hidden.
+  const interior = app.session.state.geometry.pieces.find((p) => !app.renderer.onlyPieces.has(p.id));
+  const cluster = app.session.state.clusters.get(app.session.state.clusterOfPiece[interior.id]);
+  const centre = { x: cluster.x, y: cluster.y };
+  const grabbed = app.renderer.hitTest(app.session.state, centre);
+  app.toggleEdgesOnly();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return {
+    total,
+    shown,
+    drawnWhenFiltered,
+    drawnAfter: app.renderer.stats.piecesDrawn,
+    grabbedInterior: grabbed?.pieceId === interior.id,
+  };
+});
+check('edges-only shows fewer pieces than the puzzle has', edgesOnly.shown !== null && edgesOnly.shown < edgesOnly.total, `${edgesOnly.shown} of ${edgesOnly.total}`);
+check('and actually draws fewer of them', edgesOnly.drawnWhenFiltered < edgesOnly.drawnAfter, `${edgesOnly.drawnWhenFiltered} -> ${edgesOnly.drawnAfter} drawn`);
+check('a hidden interior piece cannot be grabbed', edgesOnly.grabbedInterior === false);
+check('switching it off brings every piece back', edgesOnly.drawnAfter > edgesOnly.drawnWhenFiltered);
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 
