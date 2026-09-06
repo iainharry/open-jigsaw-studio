@@ -1912,11 +1912,30 @@ export class App {
         pieces += this.session.state.clusters.get(id)?.pieces.length ?? 0;
       }
       this.setStatus(
-        `${this.selection.size} selected (${pieces} piece${pieces === 1 ? '' : 's'}) · ${pct}% connected`,
+        `${this.selection.size} selected (${pieces} piece${pieces === 1 ? '' : 's'})` +
+          `${this.hintNote()} · ${pct}% connected`,
       );
+    } else if (this.hintsOn) {
+      this.setStatus(`${pct}% connected · Hints on — select a piece to see its neighbours.`);
     } else {
       this.setStatus(`${pct}% connected`);
     }
+  }
+
+  /**
+   * What the status line says about hints, if anything.
+   *
+   * This exists because turning hints on printed a message and the very next click wiped
+   * it: selecting a piece calls `updateStatus()`, which knew nothing about hints and
+   * replaced the line with "1 selected (1 piece) · 0% connected". Reported, reasonably,
+   * as hints being broken. A mode with no ongoing evidence that it is on is a mode people
+   * assume is off, so the state is now reported on every selection rather than once.
+   */
+  private hintNote(): string {
+    if (!this.hintsOn) return '';
+    const n = this.renderer.hintClusters?.size ?? 0;
+    if (n === 0) return ' · no neighbours left to find';
+    return ` · ${n} neighbour${n === 1 ? '' : 's'} outlined, press Find to see them`;
   }
 
   private setStatus(text: string): void {

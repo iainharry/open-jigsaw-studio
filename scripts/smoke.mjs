@@ -41,6 +41,33 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
 
+/**
+ * Make the run deterministic.
+ *
+ * Puzzle *geometry* is seeded and reproducible by design, but the initial scatter calls
+ * `randomSeed()`, which is one of the few deliberate uses of Math.random -- it exists to
+ * produce a seed to store. That made this test genuinely flaky: several checks lasso a
+ * fixed screen rectangle and assume it catches some pieces, which depends on where the
+ * scatter happened to put them. A run where the lasso caught nothing failed five tray
+ * checks that had nothing wrong with them.
+ *
+ * A flaky smoke test is worse than none, because it teaches you to ignore failures --
+ * and a real regression hiding among them is exactly what it is meant to catch. So the
+ * page gets a seeded Math.random and every run is identical. If you want to shake out
+ * layout-dependent assumptions, change SMOKE_SEED rather than removing this.
+ */
+const SMOKE_SEED = Number(process.env.SMOKE_SEED ?? 20260906);
+await page.addInitScript((seed) => {
+  let a = seed >>> 0;
+  Math.random = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}, SMOKE_SEED);
+
 const failures = [];
 page.on('pageerror', (e) => failures.push(`page error: ${e.message}`));
 page.on('console', (m) => {
@@ -349,19 +376,28 @@ await page.waitForFunction(() => globalThis.__ojs.session.state.geometry.pieces.
 
 // 4c. Trays: create from a selection, collapse to reclaim screen space, drag pieces in
 //     and out, rename, and survive a reload.
+// Fit the whole scatter first. A puzzle opens zoomed to the *board*, which is mostly
+// empty -- the pieces are in a ring outside it, largely off-screen. Lassoing the visible
+// area therefore caught whatever pieces happened to stray inside, which for some scatters
+// was none, and five tray checks failed for reasons that had nothing to do with trays.
+await page.click('[data-act="fit-all"]');
+await page.waitForTimeout(300);
 await page.click('.tool'); // Select mode: a bare drag in Move mode pans instead
 await page.evaluate(async (fireSrc) => {
   const fireEv = eval(fireSrc);
   const c = document.querySelector('.board');
   const r = c.getBoundingClientRect();
-  // Lasso the whole visible board. The app now opens zoomed to the board, so a
-  // narrow lasso catches only a piece or two and makes for a weak test.
+  // Lasso the left half. After Fit all the whole puzzle is on screen, so half of it is
+  // plenty of clusters for the tray checks -- and later checks need at least one cluster
+  // left outside a tray to drag in, which lassoing everything would not leave.
+  const endX = r.width * 0.5;
+  const endY = r.height - 10;
   fireEv(c, 'pointerdown', r.left + 10, r.top + 10);
   for (let i = 1; i <= 10; i++) {
-    fireEv(c, 'pointermove', r.left + 10 + ((r.width - 20) * i) / 10, r.top + 10 + ((r.height - 20) * i) / 10);
+    fireEv(c, 'pointermove', r.left + 10 + ((endX - 10) * i) / 10, r.top + 10 + ((endY - 10) * i) / 10);
     await new Promise((z) => requestAnimationFrame(z));
   }
-  fireEv(c, 'pointerup', r.left + r.width - 10, r.top + r.height - 10);
+  fireEv(c, 'pointerup', r.left + endX, r.top + endY);
 }, fire);
 
 await page.click('.tool'); // back to Move mode
@@ -875,6 +911,30 @@ const findHidden = await page.evaluate(() => {
   return document.querySelector('[data-act="hint-find"]').hidden;
 });
 check('Find disappears when there is nothing selected', findHidden === true);
+
+// Turning hints on printed a message that the next click wiped, so selecting a piece
+// looked identical with hints on or off. The state has to be reported on every
+// selection, not once.
+const hintStatus = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const single = [...st.clusters.values()].find((c) => c.pieces.length === 1);
+  app.selection.clear();
+  app.selection.add(single.id);
+  app.syncSelection();
+  app.updateStatus();
+  const withHints = document.querySelector('.status').textContent;
+  app.toggleHints();
+  app.selection.clear();
+  app.selection.add(single.id);
+  app.syncSelection();
+  app.updateStatus();
+  const withoutHints = document.querySelector('.status').textContent;
+  app.toggleHints();
+  return { withHints, withoutHints };
+});
+check('selecting with hints on says so', /neighbour/i.test(hintStatus.withHints), hintStatus.withHints);
+check('and says something different with hints off', !/neighbour/i.test(hintStatus.withoutHints), hintStatus.withoutHints);
 
 const edgesOnly = await page.evaluate(async () => {
   const app = globalThis.__ojs;

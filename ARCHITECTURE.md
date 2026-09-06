@@ -538,8 +538,32 @@ never a piece, so it answers "where are they" and leaves the fitting to you. The
 now asserts that Find brings every hint inside the visible world rect, which is the
 property that was actually missing.
 
-The lesson generalises: an assertion that a thing is *marked* is not an assertion that it
-can be *seen*. For anything visual, look at a frame.
+A second report followed — "when I click on a piece and Hints is on I get 0% connected" —
+and nothing was broken at all. Turning hints on printed a message; selecting a piece then
+called `updateStatus()`, which knew nothing about hints and replaced the line with
+"1 selected (1 piece) · 0% connected". Identical to hints being off. A mode that gives no
+ongoing evidence it is on is a mode people correctly assume is off, so the hint state is
+now reported on every selection rather than announced once.
+
+The lesson generalises twice over: an assertion that a thing is *marked* is not an
+assertion that it can be *seen*, and a mode needs continuous feedback, not an
+announcement. For anything visual, look at a frame.
+
+### The smoke test was flaky, which is worse than absent
+
+Chasing the above turned up five failing tray checks that had nothing wrong with them.
+Puzzle geometry is seeded and reproducible by design, but the initial scatter calls
+`randomSeed()` — one of the few deliberate uses of `Math.random()`, since its whole job is
+to produce a seed to store. Several checks lassoed a fixed screen rectangle and assumed it
+caught pieces, which depended on where that run's scatter happened to land.
+
+A flaky test is worse than no test: it teaches you to skim past failures, and a real
+regression hiding in the noise is precisely what it exists to catch. Two fixes. The page
+now gets a seeded `Math.random` (`SMOKE_SEED`, overridable), so a run is reproducible.
+And the lasso was fixed rather than merely pinned — it now presses **Fit all** first,
+because a puzzle opens zoomed to the *board*, which is mostly empty with the pieces in a
+ring outside it. Pinning the seed alone would have frozen the bug in place instead of
+removing it; the test is verified across six seeds.
 
 **Edges only** hides every piece that is not on the border, for building the frame without
 five hundred interior pieces in the way. It is a display filter over unchanged state, so
