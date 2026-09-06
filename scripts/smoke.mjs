@@ -839,6 +839,43 @@ check('hints are off until asked for', hints.before === null);
 check('hints outline exactly the neighbours of the selection', hints.after === hints.realNeighbours, `${hints.after} outlined, ${hints.realNeighbours} neighbours`);
 check('hints never include the selection itself', hints.selfIncluded === false);
 
+// Marking a neighbour is worthless if the neighbour is off-screen, which in a fresh
+// scatter it usually is. Find must bring the selection and every hint into view.
+const find = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const findBtn = document.querySelector('[data-act="hint-find"]');
+  const offered = !findBtn.hidden;
+
+  const inView = () => {
+    const size = app.renderer.size;
+    const vp = app.viewport;
+    const halfW = size.width / 2 / vp.zoom;
+    const halfH = size.height / 2 / vp.zoom;
+    const ids = [...app.selection, ...app.renderer.hintClusters];
+    return ids.every((id) => {
+      const c = st.clusters.get(id);
+      return (
+        Math.abs(c.x - vp.x) <= halfW && Math.abs(c.y - vp.y) <= halfH
+      );
+    });
+  };
+
+  findBtn.click();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return { offered, allVisible: inView() };
+});
+check('Find is offered once there are hints to find', find.offered === true);
+check('Find brings the selection and every hint into view', find.allVisible === true);
+
+const findHidden = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  app.selection.clear();
+  app.syncSelection();
+  return document.querySelector('[data-act="hint-find"]').hidden;
+});
+check('Find disappears when there is nothing selected', findHidden === true);
+
 const edgesOnly = await page.evaluate(async () => {
   const app = globalThis.__ojs;
   const total = app.session.state.geometry.pieces.length;

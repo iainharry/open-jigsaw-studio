@@ -9,6 +9,7 @@
 
 import {
   chooseGrid,
+  clusterWorldBounds,
   createPuzzle,
   deserialize,
   borderPieceIds,
@@ -149,6 +150,7 @@ export class App {
     libNote: HTMLElement;
     ghost: HTMLInputElement;
     hints: HTMLButtonElement;
+    hintFind: HTMLButtonElement;
     edgesOnly: HTMLButtonElement;
   };
 
@@ -328,6 +330,7 @@ export class App {
               <input type="range" class="ghost" min="0" max="45" step="1" value="0" />
             </label>
             <button class="btn" data-act="hints" data-help="Outline the pieces that belong beside whatever you have selected. It shows you where to look; it does not place anything for you.">Hints</button>
+            <button class="btn hint-find" data-act="hint-find" hidden data-help="Move the view so the selected piece and its outlined neighbours are all on screen at once. Nothing is moved on the board — only the view.">Find</button>
             <button class="btn" data-act="edges-only" data-help="Hide every piece that is not part of the border, so you can build the frame without the rest in the way. Nothing is lost — switch it off to bring them back.">Edges only</button>
           </span>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
@@ -390,6 +393,7 @@ export class App {
       libNote: q<HTMLElement>('.lib-note'),
       ghost: q<HTMLInputElement>('.ghost'),
       hints: q<HTMLButtonElement>('[data-act="hints"]'),
+      hintFind: q<HTMLButtonElement>('.hint-find'),
       edgesOnly: q<HTMLButtonElement>('[data-act="edges-only"]'),
     };
     this.setupHelp();
@@ -406,6 +410,7 @@ export class App {
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
       if (act === 'new') void this.newPuzzle();
       else if (act === 'hints') this.toggleHints();
+      else if (act === 'hint-find') this.findHints();
       else if (act === 'edges-only') this.toggleEdgesOnly();
       else if (act === 'prepare') void this.prepareImage();
       else if (act === 'shuffle') this.shuffle();
@@ -938,6 +943,7 @@ export class App {
   private refreshHints(): void {
     if (!this.hintsOn || !this.session) {
       this.renderer.hintClusters = null;
+      this.els.hintFind.hidden = true;
       return;
     }
     const ids = new Set<number>();
@@ -945,6 +951,44 @@ export class App {
       for (const id of neighbourClusters(this.session.state, clusterId)) ids.add(id);
     }
     this.renderer.hintClusters = ids;
+    this.els.hintFind.hidden = ids.size === 0;
+  }
+
+  /**
+   * Bring the selection and its hinted neighbours into view together.
+   *
+   * The first version of hints marked the neighbours and stopped there, which assumed
+   * they were somewhere you could see. In a fresh scatter they are typically at opposite
+   * corners of a board five times the size of the picture, so the marking was correct and
+   * useless. This moves the *view*, never a piece: what it answers is "where are they",
+   * which is the question, and it leaves the finding-and-fitting to you.
+   */
+  private findHints(): void {
+    if (!this.session || !this.renderer.hintClusters) return;
+    const ids = [...this.selection, ...this.renderer.hintClusters];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      const bounds = clusterWorldBounds(this.session.state, id);
+      if (!bounds) continue;
+      minX = Math.min(minX, bounds.minX);
+      minY = Math.min(minY, bounds.minY);
+      maxX = Math.max(maxX, bounds.maxX);
+      maxY = Math.max(maxY, bounds.maxY);
+    }
+    if (!Number.isFinite(minX)) return;
+
+    this.viewport = fitTo(
+      this.renderer.size,
+      { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) },
+      0.25,
+    );
+    this.dirty = true;
+    this.setStatus(
+      `Showing the selection and its ${this.renderer.hintClusters.size} neighbours.`,
+    );
   }
 
   /**

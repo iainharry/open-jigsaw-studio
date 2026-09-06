@@ -123,9 +123,11 @@ have one without the others.
 at 45% on purpose: any stronger and you are tracing rather than solving.
 
 **Hints** outlines the pieces that belong beside whatever you have selected. Select a
-piece, and its neighbours light up in amber — it tells you where to look, not where to
-put things. It follows the selection, so it answers a question about the piece in your
-hand rather than lighting up the whole board.
+piece and its neighbours glow amber — it tells you where to look, not where to put things.
+Most of them will be off-screen in a fresh scatter, so an amber arrow appears at the edge
+of the screen pointing towards each one, and a **Find** button appears next to Hints that
+moves the view until the selected piece and all its neighbours are visible together.
+Nothing on the board is moved; only the view.
 
 **Edges only** hides every piece that is not part of the border, so you can build the
 frame in peace. Nothing is moved or lost; switch it off and everything comes back exactly

@@ -252,25 +252,39 @@ export class Renderer {
       // Outline the selection last, so a piece's own edge never paints over it. A hint
       // outline uses the same mechanism in a different colour; selection wins if a
       // cluster is somehow both, since that is the one the user is acting on.
+      //
+      // Line widths are divided by zoom because the context is scaled, which means a
+      // constant *screen* width. The first version used 2.5px for both and was invisible:
+      // a thin dashed outline on a 59px piece, somewhere in a scatter of two hundred, is
+      // no easier to find than the piece itself. A hint has to be spottable while panning
+      // past it, so it gets a wide glow as well as a heavier line.
       const hinted = !selected && (this.hintClusters?.has(clusterId) ?? false);
       if ((selected || hinted) && visible.length > 0) {
-        ctx.shadowColor = 'transparent';
         ctx.strokeStyle = selected ? this.selectionColour : this.hintColour;
-        ctx.lineWidth = 2.5 / vp.zoom;
         ctx.lineJoin = 'round';
-        if (hinted) ctx.setLineDash([7 / vp.zoom, 5 / vp.zoom]);
+        if (hinted) {
+          ctx.shadowColor = this.hintColour;
+          ctx.shadowBlur = 22 / vp.zoom;
+          ctx.lineWidth = 5 / vp.zoom;
+        } else {
+          ctx.shadowColor = 'transparent';
+          ctx.lineWidth = 2.5 / vp.zoom;
+        }
         for (const pieceId of visible) {
           const piece = state.geometry.pieces[pieceId]!;
           ctx.save();
           ctx.translate(piece.solved.x - cluster.pivotX, piece.solved.y - cluster.pivotY);
+          // Twice, so the glow builds up enough to read against a busy scatter.
+          if (hinted) ctx.stroke(this.pathFor(piece));
           ctx.stroke(this.pathFor(piece));
           ctx.restore();
         }
-        ctx.setLineDash([]);
       }
 
       ctx.restore();
     }
+
+    this.drawHintPointers(state, vp, size);
 
     if (this.band) {
       const a = worldToScreen(vp, size, { x: this.band.x, y: this.band.y });
@@ -310,6 +324,48 @@ export class Renderer {
       this.stats.medianFrameMs = sorted[sorted.length >> 1]!;
     } else {
       this.stats.medianFrameMs = elapsed;
+    }
+  }
+
+  /**
+   * Arrows at the screen edge for hinted pieces that are off-screen.
+   *
+   * Without these, hints are only useful for a neighbour that happens to be in view — and
+   * in a fresh 500-piece scatter almost none of them are. An outline you cannot see is
+   * not a hint. The arrow says which way to go and how far, and turns a hunt across the
+   * whole board into a direction.
+   */
+  private drawHintPointers(state: PuzzleState, vp: Viewport, size: ScreenSize): void {
+    if (!this.hintClusters || this.hintClusters.size === 0) return;
+    const { ctx } = this;
+    const margin = 26;
+
+    for (const clusterId of this.hintClusters) {
+      const cluster = state.clusters.get(clusterId);
+      if (!cluster || isHidden(state, clusterId)) continue;
+      const p = worldToScreen(vp, size, { x: cluster.x, y: cluster.y });
+      const onScreen =
+        p.x >= margin && p.x <= size.width - margin && p.y >= margin && p.y <= size.height - margin;
+      if (onScreen) continue;
+
+      // Clamp to the edge and point from the middle of the screen towards the piece.
+      const cx = Math.min(Math.max(p.x, margin), size.width - margin);
+      const cy = Math.min(Math.max(p.y, margin), size.height - margin);
+      const angle = Math.atan2(p.y - size.height / 2, p.x - size.width / 2);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+      ctx.fillStyle = this.hintColour;
+      ctx.shadowColor = 'rgba(0,0,0,0.7)';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(11, 0);
+      ctx.lineTo(-7, -8);
+      ctx.lineTo(-7, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     }
   }
 

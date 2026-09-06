@@ -521,6 +521,26 @@ each piece's four neighbours, and each piece knows its cluster. Hints are derive
 selection inside `syncSelection()` rather than tracked alongside it, so the two cannot
 drift apart.
 
+The first version of hints shipped working and useless, which is worth recording because
+the tests were no help at all. It drew a 2.5px dashed outline on the neighbouring pieces
+and stopped there. Every assertion passed — the right clusters were marked, the selection
+was excluded — and the feature was invisible in use. Screenshotting an actual frame showed
+why: on a 200-piece puzzle the selected piece was above the top of the window and its two
+neighbours were at the right edge and the bottom, both half cut off. A thin outline on a
+59px piece in a scatter of two hundred is no easier to find than the piece itself, and a
+scatter ring is five times the area of the board, so *most* neighbours are off-screen.
+
+Marking assumed the thing marked was visible. Two changes fixed the concept rather than
+the drawing: hinted pieces get a wide amber glow stroked twice, at a constant screen width
+so it survives zooming out; and off-screen hints get an arrow at the screen edge pointing
+towards them. **Find** then frames the selection with its neighbours — it moves the *view*,
+never a piece, so it answers "where are they" and leaves the fitting to you. The smoke test
+now asserts that Find brings every hint inside the visible world rect, which is the
+property that was actually missing.
+
+The lesson generalises: an assertion that a thing is *marked* is not an assertion that it
+can be *seen*. For anything visual, look at a frame.
+
 **Edges only** hides every piece that is not on the border, for building the frame without
 five hundred interior pieces in the way. It is a display filter over unchanged state, so
 switching it off restores everything exactly where it was — nothing is moved, trayed or
