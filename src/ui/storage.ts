@@ -53,6 +53,8 @@ export interface PuzzleRecord {
   progress: number;
   /** Small data-URL preview, so the library lists without decoding every full image. */
   thumbnail: string | null;
+  /** Whether this puzzle is cut from the photograph or played in colours only. */
+  picture?: 'photo' | 'colours';
   /** Free text the player keeps with the puzzle. */
   notes?: string;
   /** 1..5, set by the player after playing. Null or absent when unrated. */

@@ -11,6 +11,7 @@ export * from './geometry.js';
 export * from './clusters.js';
 export * from './puzzle.js';
 export * from './imageEdit.js';
+export * from './polyomino.js';
 export * from './colour.js';
 export * from './colourSort.js';
 export * from './trays.js';

@@ -20,13 +20,13 @@ import { deriveSeed, makeRng, range } from './rng.js';
 import type { PathCommand, PieceGeometry, Point, PuzzleGeometry, Rect, Side } from './types.js';
 
 /** One cubic segment; `from` is the previous point in the chain. */
-interface Seg {
+export interface Seg {
   readonly c1: Point;
   readonly c2: Point;
   readonly to: Point;
 }
 
-interface Edge {
+export interface Edge {
   readonly from: Point;
   readonly segs: readonly Seg[];
 }
@@ -40,14 +40,14 @@ export interface GeometryOptions {
   readonly randomiseTabs?: boolean;
 }
 
-const DEFAULTS = {
+export const GEOMETRY_DEFAULTS = {
   vertexJitter: 0.06,
   tabScale: 1,
   randomiseTabs: true,
 } as const;
 
 /** Reverse an edge so it can be traversed from its far end. */
-function reverseEdge(edge: Edge): Edge {
+export function reverseEdge(edge: Edge): Edge {
   const pts: Point[] = [edge.from, ...edge.segs.map((s) => s.to)];
   const segs: Seg[] = [];
   for (let i = edge.segs.length - 1; i >= 0; i--) {
@@ -58,7 +58,7 @@ function reverseEdge(edge: Edge): Edge {
 }
 
 /** A straight edge, expressed as a single cubic so all edges share one shape. */
-function straightEdge(a: Point, b: Point): Edge {
+export function straightEdge(a: Point, b: Point): Edge {
   return {
     from: a,
     segs: [
@@ -78,7 +78,7 @@ function straightEdge(a: Point, b: Point): Edge {
  * into image space. `perp` is the perpendicular reference length (the smaller cell
  * dimension), so tabs stay round on non-square grids instead of being stretched.
  */
-function tabbedEdge(a: Point, b: Point, seed: number, opts: Required<GeometryOptions>, perp: number): Edge {
+export function tabbedEdge(a: Point, b: Point, seed: number, opts: Required<GeometryOptions>, perp: number): Edge {
   const rng = makeRng(seed);
 
   const dx = b.x - a.x;
@@ -159,7 +159,7 @@ export function generateGeometry(
   if (rows < 1 || cols < 1) throw new Error(`invalid grid ${rows}x${cols}`);
   if (imageWidth <= 0 || imageHeight <= 0) throw new Error('invalid image dimensions');
 
-  const opts: Required<GeometryOptions> = { ...DEFAULTS, ...options };
+  const opts: Required<GeometryOptions> = { ...GEOMETRY_DEFAULTS, ...options };
   const cellWidth = imageWidth / cols;
   const cellHeight = imageHeight / rows;
   const perp = Math.min(cellWidth, cellHeight);
@@ -272,6 +272,11 @@ export function generateGeometry(
         outline,
         solved: { x: bounds.x, y: bounds.y },
         neighbours,
+        adjacent: ([neighbours.top, neighbours.right, neighbours.bottom, neighbours.left]
+          .filter((n) => n >= 0)
+          .sort((a, b) => a - b)),
+        isBorder: r === 0 || c === 0 || r === rows - 1 || c === cols - 1,
+        cells: [{ row: r, col: c }],
         sideSegmentCounts,
       });
     }

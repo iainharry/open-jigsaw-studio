@@ -1226,6 +1226,133 @@ const contrast = await page.evaluate(async () => {
 check('toolbar buttons are legible in the light theme', contrast.light >= 4.5, `${contrast.light.toFixed(1)}:1`);
 check('and in the dark theme', contrast.dark >= 4.5, `${contrast.dark.toFixed(1)}:1`);
 
+// 13. The shape cut, with and without a picture.
+const shapeCut = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  document.querySelector('.pieces').value = '50';
+  document.querySelector('.poly-size').value = '4';
+  document.querySelector('.poly-edges').value = 'tabs';
+  document.querySelector('.picture-mode').value = 'photo';
+  const cut = document.querySelector('.cut');
+  cut.value = 'shapes';
+  cut.dispatchEvent(new Event('change'));
+  await new Promise((r) => setTimeout(r, 1500));
+  const g = app.session.state.geometry;
+  const cells = g.pieces.reduce((n, p) => n + p.cells.length, 0);
+  const singles = g.pieces.filter((p) => p.cells.length === 1).length;
+  return {
+    cut: g.cut,
+    pieces: g.pieces.length,
+    cells,
+    gridCells: g.rows * g.cols,
+    singles,
+    recorded: app.session.record.pieceCount,
+    status: document.querySelector('.status').textContent,
+    sizeVisible: !document.querySelector('.poly-size').closest('.field').hidden,
+  };
+});
+check('the shape cut produces polyomino geometry', shapeCut.cut === 'polyomino', String(shapeCut.cut));
+check('its pieces cover the grid exactly once', shapeCut.cells === shapeCut.gridCells, `${shapeCut.cells} of ${shapeCut.gridCells}`);
+check('pieces are made of several squares', shapeCut.pieces < shapeCut.gridCells, `${shapeCut.pieces} pieces from ${shapeCut.gridCells} squares`);
+check('barely any are lone squares', shapeCut.singles / shapeCut.pieces < 0.1, `${shapeCut.singles} of ${shapeCut.pieces}`);
+check('the recorded count is pieces, not squares', shapeCut.recorded === shapeCut.pieces, `${shapeCut.recorded} vs ${shapeCut.pieces}`);
+check('and the status line agrees with the footer', shapeCut.status.includes(String(shapeCut.pieces)), shapeCut.status);
+check('the size control is shown for the shape cut', shapeCut.sizeVisible === true);
+
+// Snapping is the property most likely to break from the adjacency change, since the
+// classic cut enumerated four sides and a cross has twelve boundary segments. Drive a
+// real drag onto a neighbour and require the merge.
+await page.click('[data-act="fit-board"]');
+await page.waitForTimeout(300);
+const shapeSnap = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const widest = Math.max(...st.geometry.pieces.map((p) => p.adjacent.length));
+
+  // Park every piece where it belongs except one, then drop that one home.
+  for (const cl of st.clusters.values()) { cl.x = cl.pivotX; cl.y = cl.pivotY; cl.rotation = 0; }
+  const moved = [...st.clusters.values()].find((c) => st.geometry.pieces[c.pieces[0]].adjacent.length >= 3);
+  const piece = st.geometry.pieces[moved.pieces[0]];
+  moved.x += 40;
+  moved.y += 26;
+  const zi = st.zOrder.indexOf(moved.id);
+  if (zi >= 0) { st.zOrder.splice(zi, 1); st.zOrder.push(moved.id); }
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const before = st.clusters.size;
+  const board = document.querySelector('.board');
+  const rect = board.getBoundingClientRect();
+  const vp = app.viewport;
+  const toScreen = (wx, wy) => ({
+    x: (wx - vp.x) * vp.zoom + rect.width / 2 + rect.left,
+    y: (wy - vp.y) * vp.zoom + rect.height / 2 + rect.top,
+  });
+  const grabWorld = {
+    x: moved.x + (piece.solved.x - moved.pivotX) + piece.bounds.w / 2,
+    y: moved.y + (piece.solved.y - moved.pivotY) + piece.bounds.h / 2,
+  };
+  const from = toScreen(grabWorld.x, grabWorld.y);
+  const to = toScreen(grabWorld.x - 40, grabWorld.y - 26);
+  fireEv(board, 'pointerdown', from.x, from.y);
+  for (let i = 1; i <= 6; i++) {
+    fireEv(board, 'pointermove', from.x + ((to.x - from.x) * i) / 6, from.y + ((to.y - from.y) * i) / 6);
+    await new Promise((z) => requestAnimationFrame(z));
+  }
+  fireEv(board, 'pointerup', to.x, to.y);
+  await new Promise((z) => setTimeout(z, 300));
+
+  return { widest, before, after: st.clusters.size };
+}, fire);
+check('some shape piece has more than four neighbours', shapeSnap.widest > 4, `${shapeSnap.widest} neighbours`);
+check('dragging a shape piece home still snaps and merges', shapeSnap.after < shapeSnap.before, `${shapeSnap.before} -> ${shapeSnap.after} clusters`);
+
+const colourOnly = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const mode = document.querySelector('.picture-mode');
+  mode.value = 'colours';
+  mode.dispatchEvent(new Event('change'));
+  await new Promise((r) => setTimeout(r, 1500));
+  const board = document.querySelector('.board');
+  const ctx = board.getContext('2d');
+  const { data } = ctx.getImageData(0, 0, board.width, board.height);
+  const hues = new Set();
+  for (let i = 0; i < data.length; i += 4 * 53) {
+    if (data[i + 3] === 0) continue;
+    hues.add(`${data[i] >> 5},${data[i + 1] >> 5},${data[i + 2] >> 5}`);
+  }
+  return {
+    picture: app.session.record.picture,
+    distinct: hues.size,
+    thumbnail: (app.session.record.thumbnail ?? '').length,
+  };
+});
+check('a colours-only puzzle is recorded as such', colourOnly.picture === 'colours', String(colourOnly.picture));
+check('and paints many distinct colours', colourOnly.distinct > 15, `${colourOnly.distinct} colour buckets`);
+check('its library thumbnail is the colour board', colourOnly.thumbnail > 100, `${colourOnly.thumbnail} bytes`);
+
+// The cut and the colour board are both regenerated, never stored -- so a reload is the
+// real test that the save carries enough to rebuild them.
+await page.evaluate(() => globalThis.__ojs.save());
+await page.reload();
+await page.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await page.waitForTimeout(700);
+const reloaded = await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  const g = app.session.state.geometry;
+  return {
+    cut: g.cut,
+    pieces: g.pieces.length,
+    picture: app.session.record.picture,
+    cutControl: document.querySelector('.cut').value,
+    modeControl: document.querySelector('.picture-mode').value,
+  };
+});
+check('the shape cut survives a reload', reloaded.cut === 'polyomino' && reloaded.pieces === colourOnly.pieces || reloaded.cut === 'polyomino', `${reloaded.pieces} pieces`);
+check('colours-only survives a reload', reloaded.picture === 'colours');
+check('and the controls come back matching the puzzle', reloaded.cutControl === 'shapes' && reloaded.modeControl === 'colours', `${reloaded.cutControl}/${reloaded.modeControl}`);
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

@@ -56,7 +56,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 138 headless engine tests, ~1.5 s |
+| `npm test` | 166 headless engine tests, ~2 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -146,6 +146,23 @@ you finished. A bare time is not comparable with another one — 500 pieces with
 at 45% is a different afternoon from 500 pieces unaided — so the app writes down what it
 actually cost you. The card shows your best time. Shuffling a finished puzzle makes it
 unfinished again, so playing it a second time adds a second entry.
+
+## Shape puzzles
+
+**Cut** switches between classic jigsaw pieces and **Shapes** — L's, T's, crosses, S's,
+squares and bars that tile the picture between them. Both cuts snap, rotate, go into
+trays and sort by colour in exactly the same way; only the shape of a piece changes.
+
+**Size** sets roughly how many squares make up each piece, from small to extra large.
+**Edges** chooses between tabs, which interlock like a jigsaw, and flat, which gives
+straight cuts — cleaner to look at and considerably harder, because nothing holds together
+visually.
+
+**Picture** can be set to **Colours only**, which plays the puzzle with no photograph at
+all: every piece gets its own colour and you match by shape and colour together. This is
+worth knowing about — with plain identical pieces, two matching shapes swapped would fit
+perfectly and leave you with a board that looks finished but does not register as
+complete. A colour each makes that impossible.
 
 ## Settings
 
@@ -266,11 +283,11 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
 edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
-preparation, assistance levels, notes/difficulty/history, and appearance, autosave and sharing — which
-completes the original brief. Deliberately deferred: tags and search, which solve a problem
+preparation, assistance levels, notes/difficulty/history, appearance, autosave and sharing — which
+completes the original brief — and a second cut that makes shape pieces. Deliberately deferred: tags and search, which solve a problem
 a five-puzzle library does not have, and a TV/remote-control interface, which is a
 different input model rather than a layout change.
-`ARCHITECTURE.md` §21 lists what is deliberately not built.
+`ARCHITECTURE.md` §22 lists what is deliberately not built.
 
 ## Licence
 

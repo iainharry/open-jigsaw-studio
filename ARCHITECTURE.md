@@ -1,8 +1,8 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M9 (engine, selection, rotation, library, trays,
-colour sorting, shipping, image preparation, assistance levels, notes and history, and
-appearance/autosave/sharing).
+Status of this document: covers M1 to M10 (engine, selection, rotation, library, trays,
+colour sorting, shipping, image preparation, assistance levels, notes and history,
+appearance/autosave/sharing, and the polyomino cut).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -20,7 +20,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 138 current tests run headless in about 1.5 seconds. If engine code ever needs jsdom, the
+All 166 current tests run headless in about 2 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -680,7 +680,81 @@ the smoke test measures the thing that actually matters: the WCAG contrast ratio
 toolbar button's text and its background, in both themes, required to be at least 4.5:1.
 "The theme was applied" was never the property worth asserting; "you can read it" is.
 
-## 21. Known limitations after M2
+## 21. A second cut: polyomino pieces
+
+L-shapes, T's, crosses and bars that tile the picture, with or without a photograph
+behind them. The interesting thing about building it was how little had to change.
+
+**What needed no change at all.** `findSnap` looks grid-bound and is not: the maths is
+`toWorld(cluster, neighbour.solved)` against `toWorld(other, neighbour.solved)`, which is
+positional. It used `neighbours` only to enumerate candidate pairs. Clusters, transforms,
+merging, rotation, scatter, trays, the save mechanism, the renderer, the bake cache, input
+handling and all three assistance levels were equally indifferent. That is section 3's
+decision — a piece is an outline plus a UV rect — paying off six milestones later: a
+cross-shaped outline is just another outline.
+
+**What did need changing was one assumption.** `PieceGeometry.neighbours` is
+`Record<Side, number>`: exactly four. An L has eight boundary segments and a plus has
+twelve. That field, plus `row`/`col` (colour sampling) and `rows × cols === pieces.length`,
+was the whole of the grid dependency. It was replaced by `adjacent` (a list), `isBorder`
+(a flag) and `cells` (what the piece is actually made of), and snapping, hints, edge
+selection and edges-only were moved onto those. The existing 138 tests passing unchanged
+afterwards is the evidence that the generalisation was faithful.
+
+**Unit edges are shared, as in the classic cut.** A boundary between two pieces is a run
+of unit cell-edges, each built once against a key derived from its lattice position and
+traversed forwards by one owner and backwards by the other. Complementary tabs stay true
+by construction. The picture's outer border is never tabbed, since a tab there would have
+no photograph behind it.
+
+**The lattice is deliberately not jittered.** The classic cut wobbles its grid vertices so
+pieces are not a uniform lattice. Here that fights the point: an L reads as an L because
+its corners are square. Variety comes from the shapes instead.
+
+**Placement is greedy, not backtracking.** A backtracking tiler can spend exponential time
+proving a rectangle cannot be tiled by the shapes it was given. Including the single cell
+in the vocabulary makes failure impossible, so one greedy pass always terminates with a
+valid partition.
+
+### The size dial made things worse before it made them better
+
+Greedy placement is honest but not automatically good, and the first version was not. On a
+10×16 grid, asking for five-cell pieces produced **fifteen single-cell scraps out of
+forty-eight pieces**: the big shapes fitted first and stranded cells behind them, so
+turning the dial up made the result worse. Every test passed, because the guard measured
+the *fraction of cells* in pieces of three or more — and fifteen strays among a hundred
+and sixty cells is still 91%.
+
+Two changes. A placement that would leave a free cell with no free neighbour is rejected,
+which costs one look around and removes the cause; and the assertion now counts scraps
+directly instead of measuring cells. Same grid, same seed, same dial setting: fifteen
+singles became zero. It was found by printing the tiling as ASCII and looking at it, which
+is now three times in this project that looking at the output caught what an assertion
+could not.
+
+### Playing without a picture
+
+A picture-free puzzle is not a rendering mode. Piece outlines tile the picture exactly —
+the shared-edge guarantee again — so filling every outline with its own colour, in its
+solved position, produces an ordinary image that goes to `setImage()` like a photograph.
+The bake cache, renderer, reference panel, thumbnails and ghost all work untouched.
+Filling the *outlines* rather than the grid cells matters: a tab overhangs into the
+neighbour's cell, so colouring by cell would give every tab the colour of the piece it
+points at.
+
+Colours are spaced by the golden angle on the hue circle. Neighbouring pieces usually have
+close ids, and consecutive ids land far apart under the golden angle, so neighbours
+contrast strongly without solving a graph-colouring problem.
+
+This also answers the trap that made picture-free worth arguing about. Snapping is keyed
+to solved identity, so two identical L's swapped would fit perfectly, look finished, and
+leave the puzzle reading as incomplete with nothing on screen to show which two were
+wrong. With a colour each, the swap is visible.
+
+The colour board is regenerated on open, never stored — like the prepared image, and for
+the same reason.
+
+## 22. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

@@ -10,11 +10,11 @@
 import {
   chooseGrid,
   clusterWorldBounds,
-  createPuzzle,
   deserialize,
   borderPieceIds,
   edgeClusters,
   generateGeometry,
+  generatePolyominoGeometry,
   DEFAULT_EDIT,
   isUneditedImage,
   type ImageEdit,
@@ -48,6 +48,7 @@ import { PointerInput, type Tool } from '../input/pointer.js';
 import { PrepareView } from './prepare.js';
 import { renderEdited } from '../render/applyEdit.js';
 import { Renderer } from '../render/renderer.js';
+import { makeColourBoard } from '../render/colourBoard.js';
 import { samplePieceColours } from '../render/pieceColours.js';
 import { fitTo, screenToWorld, worldToScreen, zoomAbout } from '../render/viewport.js';
 import { canvasToBlob, makeDemoImage } from './demoImage.js';
@@ -139,6 +140,8 @@ export class App {
   private viewport: Viewport = { x: 0, y: 0, zoom: 1 };
   private dirty = true;
   private saveTimer: number | null = null;
+  /** What the renderer is actually drawing: the photo, or a generated colour board. */
+  private shown: CanvasImageSource | null = null;
   private appearance: Appearance = loadAppearance();
   /** When the last successful save landed, for the footer readout. */
   private lastSavedAt: number | null = null;
@@ -176,6 +179,10 @@ export class App {
     ghost: HTMLInputElement;
     hints: HTMLButtonElement;
     hintFind: HTMLButtonElement;
+    cut: HTMLSelectElement;
+    polySize: HTMLSelectElement;
+    polyEdges: HTMLSelectElement;
+    pictureMode: HTMLSelectElement;
     settings: HTMLElement;
     setTheme: HTMLSelectElement;
     setTable: HTMLSelectElement;
@@ -229,6 +236,7 @@ export class App {
     // After the renderer, not inside buildDom: applying appearance sets the board colour
     // and the bake edge weight, both of which live on the renderer.
     this.setupAppearance();
+    this.updateCutUi();
     this.input = new PointerInput(this.canvas, this.renderer, {
       getState: () => this.session?.state ?? null,
       getViewport: () => this.viewport,
@@ -379,6 +387,35 @@ export class App {
             <button class="btn hint-find" data-act="hint-find" hidden data-help="Move the view so the selected piece and its outlined neighbours are all on screen at once. Nothing is moved on the board — only the view.">Find</button>
             <button class="btn" data-act="edges-only" data-help="Hide every piece that is not part of the border, so you can build the frame without the rest in the way. Nothing is lost — switch it off to bring them back.">Edges only</button>
           </span>
+          <span class="divider"></span>
+          <span class="group">
+            <label class="field" data-help="Classic jigsaw pieces, or shape pieces \u2014 L's, T's, crosses and bars that tile the picture. Both interlock and snap the same way.">Cut
+              <select class="cut">
+                <option value="classic">Classic</option>
+                <option value="shapes">Shapes</option>
+              </select>
+            </label>
+            <label class="field poly-only" data-help="Roughly how many squares make up each shape piece. Larger means fewer, chunkier pieces.">Size
+              <select class="poly-size">
+                <option value="2">Small</option>
+                <option value="3">Medium</option>
+                <option value="4" selected>Large</option>
+                <option value="5">Extra large</option>
+              </select>
+            </label>
+            <label class="field poly-only" data-help="Tabs interlock like a jigsaw. Flat gives straight cuts, which looks cleaner and is considerably harder because nothing holds together visually.">Edges
+              <select class="poly-edges">
+                <option value="tabs">Tabs</option>
+                <option value="flat">Flat</option>
+              </select>
+            </label>
+            <label class="field" data-help="Cut up your picture, or play with no picture at all \u2014 every piece gets its own colour, so you match by shape and colour instead.">Picture
+              <select class="picture-mode">
+                <option value="photo">Photo</option>
+                <option value="colours">Colours only</option>
+              </select>
+            </label>
+          </span>
           <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           <span class="spacer"></span>
@@ -468,6 +505,10 @@ export class App {
       ghost: q<HTMLInputElement>('.ghost'),
       hints: q<HTMLButtonElement>('[data-act="hints"]'),
       hintFind: q<HTMLButtonElement>('.hint-find'),
+      cut: q<HTMLSelectElement>('.cut'),
+      polySize: q<HTMLSelectElement>('.poly-size'),
+      polyEdges: q<HTMLSelectElement>('.poly-edges'),
+      pictureMode: q<HTMLSelectElement>('.picture-mode'),
       settings: q<HTMLElement>('.settings'),
       setTheme: q<HTMLSelectElement>('.set-theme'),
       setTable: q<HTMLSelectElement>('.set-table'),
@@ -565,6 +606,12 @@ export class App {
     });
 
     this.els.pieces.addEventListener('change', () => void this.newPuzzle());
+    for (const control of [this.els.cut, this.els.polySize, this.els.polyEdges, this.els.pictureMode]) {
+      control.addEventListener('change', () => {
+        this.updateCutUi();
+        void this.newPuzzle();
+      });
+    }
 
     this.els.title.addEventListener('change', () => {
       if (!this.session) return;
@@ -735,35 +782,60 @@ export class App {
     const limits = pieceCountLimits(image.width, image.height);
     // Only the hard maximum is enforced. Going past `comfortable` is the player's call.
     const target = Math.min(requested, limits.maximum);
-    const { rows, cols } = chooseGrid(image.width, image.height, target);
     const seed = randomSeed();
+    const shapes = this.els.cut.value === 'shapes';
+    const targetCells = Number(this.els.polySize.value);
+    const flatEdges = this.els.polyEdges.value === 'flat';
 
-    const state = createPuzzle({
-      seed,
-      rows,
-      cols,
-      imageWidth: image.width,
-      imageHeight: image.height,
-      settings: { rotationEnabled: this.els.rotateOn.checked },
-      ...GEOMETRY_OPTIONS,
+    // For the shape cut the grid counts *cells*, not pieces: a hundred pieces of about
+    // four cells each needs four hundred cells. Sizing the grid by piece count instead
+    // would give a hundred cells and twenty-five pieces.
+    // Capped again after multiplying: the cap is about how small a *cell* may get, and
+    // for the shape cut the cells are what the grid is made of.
+    const cellTarget = Math.min(shapes ? target * targetCells : target, limits.maximum);
+    const { rows, cols } = chooseGrid(image.width, image.height, cellTarget);
+
+    const geometry = shapes
+      ? generatePolyominoGeometry(seed, rows, cols, image.width, image.height, {
+          ...GEOMETRY_OPTIONS,
+          targetCells,
+          flatEdges,
+        })
+      : generateGeometry(seed, rows, cols, image.width, image.height, GEOMETRY_OPTIONS);
+    const state = stateFromGeometry(geometry, {
+      ...DEFAULT_SETTINGS,
+      rotationEnabled: this.els.rotateOn.checked,
     });
     scatter(state, seed, this.scatterArea(image.width, image.height), {
       avoid: { x: 0, y: 0, w: image.width, h: image.height },
     });
     this.clearSelection();
 
+    // A picture-free puzzle is not a special rendering mode: piece outlines tile the
+    // picture exactly, so filling each one with its own colour produces an image the
+    // renderer, reference panel, thumbnails and ghost all take unchanged.
+    const colours = this.els.pictureMode.value === 'colours';
+    const shown: CanvasImageSource = colours
+      ? makeColourBoard(state.geometry, image.width, image.height)
+      : image;
+    this.shown = shown;
+
     const record: PuzzleRecord = {
       id: `p_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
       title,
       imageHash: meta.hash,
       saved: null,
-      pieceCount: rows * cols,
+      // The number of pieces, not the number of cells. For the shape cut those differ by
+      // roughly the size dial, and reporting cells told the player 513 pieces where the
+      // footer counted 120.
+      pieceCount: state.geometry.pieces.length,
       createdAt: Date.now(),
       lastPlayed: Date.now(),
       completedAt: null,
       progress: 0,
-      thumbnail: makeThumbnail(image, image.width, image.height),
+      thumbnail: makeThumbnail(shown, image.width, image.height),
       edit: isUneditedImage(edit) ? null : edit,
+      picture: colours ? 'colours' : 'photo',
     };
 
     this.session = { record, state, image, original, imageMeta: meta, edit };
@@ -771,7 +843,7 @@ export class App {
     this.pieceColours = null;
     this.endColourSort();
     this.renderer.invalidateGeometry();
-    this.renderer.setImage(image, image.width, image.height);
+    this.renderer.setImage(shown, image.width, image.height);
     this.els.title.value = title;
     this.activeTray = null;
     this.reapplyAssistance();
@@ -783,9 +855,17 @@ export class App {
     setLastOpened(record.id);
     await this.save();
 
-    const made = rows * cols;
+    const made = state.geometry.pieces.length;
     const edge = Math.round(pieceEdgePixels(image.width, image.height, made));
-    if (requested > limits.maximum) {
+    if (shapes && made < requested * 0.9) {
+      this.setStatus(
+        `${made} shape pieces of about ${targetCells} squares each, roughly ${edge}px across. ` +
+          `A ${image.width}×${image.height} image cannot carry ${requested} pieces this size — ` +
+          `choose a smaller size for more of them.`,
+      );
+    } else if (shapes) {
+      this.setStatus(`${made} shape pieces, roughly ${edge}px across.`);
+    } else if (requested > limits.maximum) {
       this.setStatus(
         `${made} pieces. ${requested} is more than this ${image.width}×${image.height} image can carry — ` +
           `the pieces would be almost entirely tab and no picture.`,
@@ -826,7 +906,18 @@ export class App {
     this.pieceColours = null;
     this.endColourSort();
     this.renderer.invalidateGeometry();
-    this.renderer.setImage(image, image.width, image.height);
+    // Colour boards are derived from geometry, not stored, exactly as the prepared image
+    // is derived from the original. Regenerating both on open is what keeps a record to
+    // a few kilobytes whatever the puzzle is made of.
+    const shown: CanvasImageSource =
+      record.picture === 'colours'
+        ? makeColourBoard(state.geometry, image.width, image.height)
+        : image;
+    this.shown = shown;
+    this.renderer.setImage(shown, image.width, image.height);
+    this.els.pictureMode.value = record.picture === 'colours' ? 'colours' : 'photo';
+    this.els.cut.value = state.geometry.cut === 'polyomino' ? 'shapes' : 'classic';
+    this.updateCutUi();
     this.els.title.value = record.title;
     this.els.pieces.value = String(
       PIECE_CHOICES.reduce((best, n) =>
@@ -841,7 +932,7 @@ export class App {
     // Records written before thumbnails existed get one now, so the library is not
     // permanently full of blank cards for older puzzles.
     if (!record.thumbnail) {
-      record.thumbnail = makeThumbnail(image, image.width, image.height);
+      record.thumbnail = makeThumbnail(shown, image.width, image.height);
       await putPuzzle(record).catch(() => undefined);
     }
     this.drawReference();
@@ -1208,6 +1299,14 @@ export class App {
     this.dirty = true;
   }
 
+  /** The shape-cut controls only mean anything for the shape cut. */
+  private updateCutUi(): void {
+    const shapes = this.els.cut.value === 'shapes';
+    for (const el of this.root.querySelectorAll<HTMLElement>('.poly-only')) {
+      el.hidden = !shapes;
+    }
+  }
+
   /** Which aids were switched on, for recording beside a finishing time. */
   private activeAssists(): string[] {
     const on: string[] = [];
@@ -1328,7 +1427,9 @@ export class App {
     el.height = height;
     el.style.width = `${width}px`;
     el.style.height = `${height}px`;
-    el.getContext('2d')?.drawImage(image, 0, 0, width, height);
+    // The reference has to show what the puzzle was cut from, which for a colours-only
+    // puzzle is the colour board rather than the photograph behind it.
+    el.getContext('2d')?.drawImage(this.shown ?? image, 0, 0, width, height);
   }
 
   // --- Help -----------------------------------------------------------------

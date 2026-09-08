@@ -11,6 +11,7 @@
 
 import { computePivot } from './clusters.js';
 import { generateGeometry, type GeometryOptions } from './geometry.js';
+import { generatePolyominoGeometry, type PolyominoOptions } from './polyomino.js';
 import { stateFromGeometry, type PuzzleState } from './puzzle.js';
 import {
   DEFAULT_SETTINGS,
@@ -43,6 +44,14 @@ export interface SavedPuzzle {
     imageWidth: number;
     imageHeight: number;
     geometryOptions: GeometryOptions;
+    /**
+     * Which generator cuts the pieces. Absent on every save written before the polyomino
+     * cut existed, and those are all classic — which is why the field is optional rather
+     * than the format being versioned. Geometry is regenerated rather than stored, so a
+     * save is only as portable as the generator it names.
+     */
+    cut?: 'classic' | 'polyomino';
+    polyominoOptions?: PolyominoOptions;
   };
   settings: PuzzleSettings;
   clusters: SavedCluster[];
@@ -71,6 +80,9 @@ export function serialize(
       imageWidth: g.imageWidth,
       imageHeight: g.imageHeight,
       geometryOptions,
+      ...(g.cut === 'polyomino'
+        ? { cut: 'polyomino' as const, polyominoOptions: g.polyominoOptions }
+        : {}),
     },
     settings: state.settings,
     clusters: [...state.clusters.values()].map((c) => ({
@@ -99,7 +111,17 @@ export function deserialize(saved: SavedPuzzle): { state: PuzzleState; viewport:
   }
 
   const p = saved.puzzle;
-  const geometry = generateGeometry(
+  const geometry =
+    p.cut === 'polyomino'
+      ? generatePolyominoGeometry(
+          p.seed,
+          p.rows,
+          p.cols,
+          p.imageWidth,
+          p.imageHeight,
+          p.polyominoOptions ?? {},
+        )
+      : generateGeometry(
     p.seed,
     p.rows,
     p.cols,

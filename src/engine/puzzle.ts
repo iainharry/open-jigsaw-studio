@@ -26,11 +26,8 @@ import {
   type Point,
   type PuzzleGeometry,
   type PuzzleSettings,
-  type Side,
   type Tray,
 } from './types.js';
-
-const SIDES: readonly Side[] = ['top', 'right', 'bottom', 'left'];
 
 export interface PuzzleState {
   readonly geometry: PuzzleGeometry;
@@ -305,9 +302,11 @@ export function findSnap(state: PuzzleState, clusterId: number): number | null {
 
   for (const pieceId of cluster.pieces) {
     const piece = geometry.pieces[pieceId]!;
-    for (const side of SIDES) {
-      const neighbourId = piece.neighbours[side];
-      if (neighbourId < 0) continue;
+    // `adjacent`, not the four sides: a polyomino piece touches as many neighbours as its
+    // silhouette has boundary segments. The snap maths below is untouched by that — it
+    // compares where a neighbour *would* sit against where it does, which is positional
+    // and knows nothing about grids.
+    for (const neighbourId of piece.adjacent) {
       const otherId = state.clusterOfPiece[neighbourId]!;
       if (otherId === clusterId) continue;
       if (state.trayOfCluster.has(otherId)) continue;
@@ -513,6 +512,34 @@ export function progress(state: PuzzleState): number {
  * already in the geometry — a border piece has a neighbour id of -1 — so this costs
  * nothing to provide.
  */
+/**
+ * How many unit cell-edges of a piece face the outside of the picture.
+ *
+ * Counted from the cells rather than from the neighbour record, so an L or a cross gives
+ * a real answer: the cross in the middle of a board has none, and the L in a corner has
+ * several. Two or more is what makes something a corner piece in either cut.
+ */
+function outsideSides(geometry: PuzzleGeometry, piece: PieceGeometry): number {
+  const owner = new Set(piece.cells.map((c) => `${c.row},${c.col}`));
+  let count = 0;
+  for (const cell of piece.cells) {
+    for (const [dr, dc] of [
+      [-1, 0],
+      [0, 1],
+      [1, 0],
+      [0, -1],
+    ] as const) {
+      const r = cell.row + dr;
+      const c = cell.col + dc;
+      if (r < 0 || c < 0 || r >= geometry.rows || c >= geometry.cols) count++;
+      else if (!owner.has(`${r},${c}`)) {
+        // An inside edge shared with another piece is not an outside edge.
+      }
+    }
+  }
+  return count;
+}
+
 export function edgeClusters(
   state: PuzzleState,
   options: { cornersOnly?: boolean } = {},
@@ -520,8 +547,10 @@ export function edgeClusters(
   const wanted = options.cornersOnly ? 2 : 1;
   const found = new Set<number>();
   for (const piece of state.geometry.pieces) {
-    let borders = 0;
-    for (const side of SIDES) if (piece.neighbours[side] < 0) borders++;
+    // Sides with nothing on the other side of them. For a classic piece that is the
+    // four-neighbour count; for a polyomino it is however many of its cell edges face
+    // outwards, so "two or more" still picks out the corners.
+    const borders = outsideSides(state.geometry, piece);
     if (borders >= wanted) {
       const clusterId = state.clusterOfPiece[piece.id];
       if (clusterId !== undefined && state.clusters.has(clusterId)) found.add(clusterId);
@@ -549,9 +578,7 @@ export function neighbourClusters(state: PuzzleState, clusterId: number): number
   for (const pieceId of cluster.pieces) {
     const piece = state.geometry.pieces[pieceId];
     if (!piece) continue;
-    for (const side of SIDES) {
-      const neighbourId = piece.neighbours[side];
-      if (neighbourId < 0) continue;
+    for (const neighbourId of piece.adjacent) {
       const other = state.clusterOfPiece[neighbourId];
       if (other === undefined || other === clusterId) continue;
       if (state.clusters.has(other)) found.add(other);
@@ -569,14 +596,7 @@ export function neighbourClusters(state: PuzzleState, clusterId: number): number
  */
 export function borderPieceIds(state: PuzzleState): Set<number> {
   const ids = new Set<number>();
-  for (const piece of state.geometry.pieces) {
-    for (const side of SIDES) {
-      if (piece.neighbours[side] < 0) {
-        ids.add(piece.id);
-        break;
-      }
-    }
-  }
+  for (const piece of state.geometry.pieces) if (piece.isBorder) ids.add(piece.id);
   return ids;
 }
 

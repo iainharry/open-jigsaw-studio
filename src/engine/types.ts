@@ -47,8 +47,33 @@ export interface PieceGeometry {
    * is" are different concepts and will diverge if we ever pad bitmaps.
    */
   readonly solved: Point;
-  /** Neighbour piece ids, or -1 at the puzzle border. */
+  /**
+   * Neighbour piece ids by side, or -1 at the puzzle border.
+   *
+   * Only meaningful for the classic cut, where a piece is exactly one grid cell and
+   * therefore has exactly four sides. A polyomino piece has as many boundary segments as
+   * its silhouette needs — eight for an L, twelve for a cross — so anything that asks
+   * "what is next to this piece" must use `adjacent`, not this. Kept because the
+   * shared-edge tests address a specific side, and because it costs nothing.
+   */
   readonly neighbours: Readonly<Record<Side, number>>;
+  /**
+   * Every piece that shares a boundary with this one, in ascending id order.
+   *
+   * The general form of `neighbours`, and the only adjacency the rest of the engine is
+   * allowed to consult. Snapping, hints, edge selection and edges-only display all run
+   * off this, which is what let a second cut exist without touching any of them.
+   */
+  readonly adjacent: readonly number[];
+  /** True when any part of this piece lies on the outside of the picture. */
+  readonly isBorder: boolean;
+  /**
+   * Grid cells this piece occupies. One cell for a classic piece, several for a
+   * polyomino. Colour sampling needs it: the bounding box of an L includes a large
+   * rectangle of the *neighbouring* piece's picture, so averaging over the box would
+   * read the wrong colours entirely.
+   */
+  readonly cells: readonly { readonly row: number; readonly col: number }[];
   /**
    * How many cubic commands each side contributes to `outline`, in the order
    * top, right, bottom, left (following the leading `move`). Lets a consumer address
@@ -68,6 +93,13 @@ export interface PuzzleGeometry {
   /** Nominal cell size, before tabs and vertex jitter. Used for snap tolerance. */
   readonly cellWidth: number;
   readonly cellHeight: number;
+  /**
+   * Which generator produced these pieces. Absent means classic, so every geometry made
+   * before a second cut existed still reads correctly.
+   */
+  readonly cut?: 'classic' | 'polyomino';
+  /** Recorded so a save can regenerate the identical tiling. */
+  readonly polyominoOptions?: Readonly<Record<string, unknown>>;
 }
 
 /** A connected group of pieces that moves as one unit. */
