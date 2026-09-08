@@ -133,6 +133,20 @@ Nothing on the board is moved; only the view.
 frame in peace. Nothing is moved or lost; switch it off and everything comes back exactly
 where it was.
 
+## Keeping track of a puzzle
+
+Open **My puzzles** and expand *Notes, rating and history* on any card.
+
+**Notes** is free text — where the picture came from, how it went, what to try next time.
+**Difficulty** is five stars you set yourself; Clear removes the rating.
+
+**History** records every time you have finished that puzzle, and records the conditions
+with it: the piece count, whether rotation was on, and which aids were switched on when
+you finished. A bare time is not comparable with another one — 500 pieces with the ghost
+at 45% is a different afternoon from 500 pieces unaided — so the app writes down what it
+actually cost you. The card shows your best time. Shuffling a finished puzzle makes it
+unfinished again, so playing it a second time adds a second entry.
+
 ## Trays
 
 A tray is a named holding area — the digital equivalent of tipping the sky pieces into a
@@ -228,11 +242,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
 edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
-preparation, and assistance levels. Next: notes, difficulty and completion history, then
-the unbuilt half of the original brief — autosave interval, appearance, sharing.
-Deliberately deferred: tags and search, which solve a problem a five-puzzle library does
-not have.
-`ARCHITECTURE.md` §19 lists what is deliberately not built.
+preparation, assistance levels, and notes/difficulty/history. Next: the unbuilt half of the
+original brief — autosave interval, appearance, sharing. Deliberately deferred: tags and
+search, which solve a problem a five-puzzle library does not have.
+`ARCHITECTURE.md` §20 lists what is deliberately not built.
 
 ## Licence
 

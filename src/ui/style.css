@@ -624,3 +624,63 @@ body {
   width: 70px;
   vertical-align: middle;
 }
+
+/* Notes, rating and completion history live in a native <details> on each library card,
+   so opening one costs no JS and closing it is the browser's job. */
+.lib-more {
+  margin-top: 6px;
+}
+
+.lib-more > summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  padding: 2px 0;
+}
+
+.lib-more > summary:hover {
+  color: var(--text);
+}
+
+.lib-rate {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+
+.btn.star {
+  padding: 2px 7px;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.btn.star.on {
+  color: #e8b45f;
+  border-color: #7a5a24;
+  background: transparent;
+}
+
+.lib-notes {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.lib-notes:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.lib-history {
+  margin-top: 6px;
+  display: grid;
+  gap: 2px;
+}

@@ -73,6 +73,7 @@ import {
   putPuzzle,
   setLastOpened,
   storedImageHashes,
+  type Completion,
   type PuzzleRecord,
   type StoredImage,
 } from './storage.js';
@@ -98,6 +99,15 @@ function formatWhen(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+function formatDuration(ms: number): string {
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'under a minute';
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
+
 interface Session {
   record: PuzzleRecord;
   state: PuzzleState;
@@ -119,6 +129,8 @@ export class App {
   private viewport: Viewport = { x: 0, y: 0, zoom: 1 };
   private dirty = true;
   private saveTimer: number | null = null;
+  /** Serialises library edits so two quick changes cannot overwrite one another. */
+  private recordWrites: Promise<void> = Promise.resolve();
   /** True once a save has failed, so the warning is given once rather than every autosave. */
   private saveFailed = false;
   private playingSince = performance.now();
@@ -847,6 +859,9 @@ export class App {
       avoid: { x: 0, y: 0, w: image.width, h: image.height },
     });
     this.session.state = fresh;
+    // A reshuffled puzzle is unfinished again. Without this, finishing it a second time
+    // would record nothing, because `save()` only writes history on the first completion.
+    this.session.record.completedAt = null;
     this.clearSelection();
     this.fitBoard();
     void this.save();
@@ -1062,6 +1077,15 @@ export class App {
       this.setStatus('Showing every piece again.');
     }
     this.dirty = true;
+  }
+
+  /** Which aids were switched on, for recording beside a finishing time. */
+  private activeAssists(): string[] {
+    const on: string[] = [];
+    if (this.renderer.ghost > 0) on.push(`ghost ${Math.round(this.renderer.ghost * 100)}%`);
+    if (this.hintsOn) on.push('hints');
+    if (this.edgesOnly) on.push('edges only');
+    return on;
   }
 
   private setGhost(percent: number): void {
@@ -1565,6 +1589,11 @@ export class App {
       if (this.session?.record.id === record.id) card.classList.add('current');
 
       const pct = Math.round(record.progress * 100);
+      // Best is the fastest finish, which is the number worth putting on the card.
+      const best = (record.history ?? []).reduce<Completion | null>(
+        (b, c) => (b === null || c.elapsedMs < b.elapsedMs ? c : b),
+        null,
+      );
       const state = record.completedAt
         ? 'Completed'
         : pct > 0
@@ -1584,8 +1613,25 @@ export class App {
           <div class="lib-sub">${
             orphaned
               ? '<span class="lib-warn">Picture missing — relink it to open this puzzle</span>'
-              : `Last played ${formatWhen(record.lastPlayed)}`
+              : `Last played ${formatWhen(record.lastPlayed)}${best ? ` · best ${formatDuration(best.elapsedMs)}` : ''}`
           }</div>
+          <details class="lib-more">
+            <summary>Notes, rating and history${
+              record.history?.length ? ` (finished ${record.history.length}\u00d7)` : ''
+            }</summary>
+            <div class="lib-rate">
+              <span class="lib-sub">Difficulty</span>
+              ${[1, 2, 3, 4, 5]
+                .map(
+                  (n) =>
+                    `<button class="btn star${(record.difficulty ?? 0) >= n ? ' on' : ''}" data-star="${n}" title="Rate ${n} out of 5">\u2605</button>`,
+                )
+                .join('')}
+              <button class="btn lib-unrate" title="Clear the rating">Clear</button>
+            </div>
+            <textarea class="lib-notes" rows="3" placeholder="Notes about this puzzle — where the picture is from, how it went, what to try next time."></textarea>
+            <div class="lib-history"></div>
+          </details>
         </div>
         <div class="lib-actions">
           ${
@@ -1605,6 +1651,39 @@ export class App {
       card.querySelector<HTMLButtonElement>('.lib-relink')?.addEventListener('click', () => {
         this.relinkPicture(record);
       });
+
+      const notes = card.querySelector<HTMLTextAreaElement>('.lib-notes')!;
+      notes.value = record.notes ?? '';
+      // On change, not on every keystroke: one write when you finish typing.
+      notes.addEventListener('change', () => {
+        void this.updateRecord(record, { notes: notes.value });
+      });
+
+      for (const star of card.querySelectorAll<HTMLButtonElement>('.star')) {
+        star.addEventListener('click', () => {
+          void this.updateRecord(record, { difficulty: Number(star.dataset['star']) });
+        });
+      }
+      card.querySelector<HTMLButtonElement>('.lib-unrate')!.addEventListener('click', () => {
+        void this.updateRecord(record, { difficulty: null });
+      });
+
+      const history = card.querySelector<HTMLElement>('.lib-history')!;
+      const runs = [...(record.history ?? [])].reverse();
+      if (runs.length === 0) {
+        history.innerHTML = '<p class="lib-sub">Not finished yet.</p>';
+      } else {
+        for (const run of runs) {
+          const row = document.createElement('div');
+          row.className = 'lib-sub';
+          const conditions = [`${run.pieceCount} pieces`];
+          if (run.rotation) conditions.push('rotation');
+          if (run.assists.length > 0) conditions.push(run.assists.join(', '));
+          else conditions.push('unaided');
+          row.textContent = `${formatWhen(run.finishedAt)} · ${formatDuration(run.elapsedMs)} · ${conditions.join(' · ')}`;
+          history.append(row);
+        }
+      }
       card.querySelector<HTMLButtonElement>('.lib-export')!.addEventListener('click', () => {
         void this.exportPuzzle(record);
       });
@@ -1666,6 +1745,38 @@ export class App {
     } catch (err) {
       this.setLibraryNote((err as Error).message);
     }
+  }
+
+  /**
+   * Write one change to a puzzle record.
+   *
+   * Re-reads the stored record first rather than writing back the copy the card was
+   * rendered from: the open session holds its own object for the same puzzle and saves
+   * progress on a timer, so writing a stale copy would roll that progress back. The
+   * library list is not refreshed afterwards, which would collapse the details panel the
+   * user is typing in.
+   */
+  private async updateRecord(
+    record: PuzzleRecord,
+    change: Partial<Pick<PuzzleRecord, 'notes' | 'difficulty'>>,
+  ): Promise<void> {
+    Object.assign(record, change);
+    if (this.session?.record.id === record.id) Object.assign(this.session.record, change);
+
+    // Serialised, because these overlap in ordinary use: type a note, then immediately
+    // click a star. Run concurrently, the second read-modify-write can begin before the
+    // first has committed, and writes back a record that still has the old note --
+    // silently losing it. The smoke test caught exactly that.
+    this.recordWrites = this.recordWrites
+      .then(async () => {
+        const stored = (await getPuzzle(record.id)) ?? record;
+        Object.assign(stored, change);
+        await putPuzzle(stored);
+      })
+      .catch((err: unknown) => {
+        this.setLibraryNote(`Could not save that: ${(err as Error).message}`);
+      });
+    return this.recordWrites;
   }
 
   private setLibraryNote(text: string): void {
@@ -1864,7 +1975,22 @@ export class App {
     record.saved = serialize(state, GEOMETRY_OPTIONS, this.viewport);
     record.lastPlayed = Date.now();
     record.progress = progress(state);
-    if (isComplete(state) && record.completedAt === null) record.completedAt = Date.now();
+    if (isComplete(state) && record.completedAt === null) {
+      record.completedAt = Date.now();
+      // Recorded once per finish, not once per save: `completedAt` is cleared by Shuffle
+      // and by cutting a new puzzle, so replaying the same picture adds another entry
+      // rather than being silently lost.
+      const history = record.history ?? (record.history = []);
+      history.push({
+        finishedAt: record.completedAt,
+        elapsedMs: state.elapsedMs,
+        pieceCount: record.pieceCount,
+        rotation: state.settings.rotationEnabled,
+        assists: this.activeAssists(),
+      });
+      // Bounded, so a much-replayed puzzle cannot grow its record without limit.
+      if (history.length > 20) history.splice(0, history.length - 20);
+    }
 
     try {
       await putPuzzle(record);
@@ -1927,8 +2053,12 @@ export class App {
   private updateStatus(): void {
     if (!this.session) return;
     if (isComplete(this.session.state)) {
-      const mins = Math.round(this.session.state.elapsedMs / 60000);
-      this.setStatus(`Complete — ${mins} minute${mins === 1 ? '' : 's'}`);
+      const assists = this.activeAssists();
+      this.setStatus(
+        `Complete in ${formatDuration(this.session.state.elapsedMs)}` +
+          `${assists.length > 0 ? ` (with ${assists.join(', ')})` : ' unaided'}` +
+          ` — recorded in My puzzles, where you can rate it and add notes.`,
+      );
       return;
     }
     const pct = Math.round(progress(this.session.state) * 100);

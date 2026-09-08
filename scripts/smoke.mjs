@@ -1010,6 +1010,107 @@ check('and actually draws fewer of them', edgesOnly.drawnWhenFiltered < edgesOnl
 check('a hidden interior piece cannot be grabbed', edgesOnly.grabbedInterior === false);
 check('switching it off brings every piece back', edgesOnly.drawnAfter > edgesOnly.drawnWhenFiltered);
 
+// 11. Notes, difficulty and completion history.
+//     Finishing is driven through the engine's own merge, because assembling a puzzle
+//     with real pointer events would take longer than the rest of this file combined.
+await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  app.renderer.ghost = 0.3; // an assist, so the recorded run must say so
+  app.els.pieces.value = '12';
+});
+await page.click('[data-act="new"]');
+await page.waitForFunction(() => globalThis.__ojs.session.state.geometry.pieces.length <= 20, null, { timeout: 30_000 });
+await page.waitForTimeout(300);
+
+await page.click('[data-act="fit-board"]');
+await page.waitForTimeout(250);
+const finished = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+
+  // Move every piece to where it belongs, then release one of them through the real
+  // pointer path. Snapping cascades through the touching neighbours, so this exercises
+  // the actual merge route rather than reaching past it into the engine.
+  for (const cl of st.clusters.values()) {
+    cl.x = cl.pivotX;
+    cl.y = cl.pivotY;
+    cl.rotation = 0;
+  }
+  const pick = [...st.clusters.values()][0];
+  const zi = st.zOrder.indexOf(pick.id);
+  if (zi >= 0) { st.zOrder.splice(zi, 1); st.zOrder.push(pick.id); }
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const board = document.querySelector('.board');
+  const rect = board.getBoundingClientRect();
+  const vp = app.viewport;
+  const piece = st.geometry.pieces[pick.pieces[0]];
+  const world = {
+    x: pick.x + (piece.solved.x - pick.pivotX) + piece.bounds.w / 2,
+    y: pick.y + (piece.solved.y - pick.pivotY) + piece.bounds.h / 2,
+  };
+  const sx = (world.x - vp.x) * vp.zoom + rect.width / 2 + rect.left;
+  const sy = (world.y - vp.y) * vp.zoom + rect.height / 2 + rect.top;
+  fireEv(board, 'pointerdown', sx, sy);
+  await new Promise((z) => requestAnimationFrame(z));
+  fireEv(board, 'pointermove', sx + 3, sy + 3);
+  await new Promise((z) => requestAnimationFrame(z));
+  fireEv(board, 'pointerup', sx + 3, sy + 3);
+  await new Promise((z) => setTimeout(z, 300));
+
+  await app.save();
+  const r = app.session.record;
+  return {
+    clusters: st.clusters.size,
+    completedAt: r.completedAt,
+    runs: (r.history ?? []).length,
+    last: (r.history ?? [])[0] ?? null,
+    status: document.querySelector('.status').textContent,
+  };
+}, fire);
+check('the puzzle reads as complete', finished.clusters === 1 && finished.completedAt !== null, `${finished.clusters} cluster`);
+check('the finish is recorded in history', finished.runs === 1, `${finished.runs} run(s)`);
+check('the run records the piece count', finished.last?.pieceCount > 0, `${finished.last?.pieceCount} pieces`);
+check('the run records the assistance used', /ghost/.test((finished.last?.assists ?? []).join(',')), (finished.last?.assists ?? []).join(', ') || 'none');
+
+// Shuffling makes it unfinished again, so a replay is recorded rather than swallowed.
+await page.click('[data-act="shuffle"]');
+await page.waitForTimeout(250);
+const afterShuffle = await page.evaluate(() => globalThis.__ojs.session.record.completedAt);
+check('shuffling clears the completion so a replay counts', afterShuffle === null);
+
+// Notes and rating persist.
+await page.click('[data-act="library"]');
+await page.waitForSelector('.lib-card', { timeout: 10_000 });
+const saved = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const card = document.querySelector('.lib-card');
+  card.querySelector('.lib-more').open = true;
+  const notes = card.querySelector('.lib-notes');
+  notes.value = 'Bought at the op shop in Warburton.';
+  notes.dispatchEvent(new Event('change'));
+  card.querySelector('[data-star="4"]').click();
+  await new Promise((r) => setTimeout(r, 400));
+  const id = app.session.record.id;
+  const stored = await new Promise((res, rej) => {
+    const q = indexedDB.open('open-jigsaw-studio');
+    q.onsuccess = () => {
+      const db = q.result;
+      const g = db.transaction('puzzles', 'readonly').objectStore('puzzles').get(id);
+      g.onsuccess = () => { res(g.result); db.close(); };
+      g.onerror = () => rej(g.error);
+    };
+    q.onerror = () => rej(q.error);
+  });
+  return { notes: stored?.notes, difficulty: stored?.difficulty, runs: (stored?.history ?? []).length };
+});
+check('notes are written to storage', saved.notes === 'Bought at the op shop in Warburton.', String(saved.notes));
+check('the rating is written to storage', saved.difficulty === 4, String(saved.difficulty));
+check('and the completion history survives alongside them', saved.runs === 1, `${saved.runs} run(s)`);
+await page.click('[data-act="close-library"]');
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

@@ -596,7 +596,45 @@ The border-piece set belongs to one puzzle's geometry, so it is re-derived when 
 opens. The switches themselves persist, because having to turn hints back on for every
 puzzle would be its own annoyance.
 
-## 19. Known limitations after M2
+## 19. Notes, difficulty and completion history
+
+Three small features, deliberately shipped without the two that usually come with them.
+
+**Tags and search are not built.** They solve a problem a five-puzzle library does not
+have: searching five puzzles is not searching. They earn their place at fifty, and
+building them now would be building for a library that does not exist. Notes and a rating
+are useful from the first puzzle, so those are what got built.
+
+**A time is recorded with its conditions.** A `Completion` carries the piece count, whether
+rotation was on, and which aids were active at the finish. A bare time is not comparable
+with another one: 500 pieces with rotation off and the ghost at 45% is a different
+afternoon from 500 pieces unaided, and a history that hid that would flatter the player
+rather than inform them. The card shows the best time; the panel lists every run with what
+it cost.
+
+**History survives replays.** `completedAt` is cleared by Shuffle and by cutting a new
+puzzle, because `save()` records a finish only on the transition to complete. Without that
+reset, finishing the same picture a second time would be silently swallowed.
+
+### A race the smoke test caught
+
+`updateRecord()` re-reads the stored record before writing, rather than writing back the
+copy the library card was rendered from — the open session holds its own object for the
+same puzzle and saves progress on a timer, so writing a stale copy would roll that
+progress back.
+
+Correct, and not sufficient. Typing a note and then immediately clicking a star runs two
+read-modify-writes concurrently: the second can begin before the first has committed, read
+the record without the note, and write it back — losing the note with no error anywhere.
+The smoke test does exactly that sequence and failed on it. Library edits are now
+serialised through a single promise chain.
+
+Worth noting what made this catchable: the assertion reads the value back **out of
+IndexedDB**, not out of the in-memory record. Asserting against the object in memory would
+have passed, because `Object.assign` had updated it — the loss was only in what was
+stored.
+
+## 20. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

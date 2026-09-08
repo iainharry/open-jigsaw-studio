@@ -23,6 +23,23 @@ export interface StoredImage {
   addedAt: number;
 }
 
+/**
+ * One finish of a puzzle.
+ *
+ * The conditions are recorded beside the time because a time on its own is not
+ * comparable with another: 500 pieces with rotation off and the ghost at 45% is a
+ * different afternoon from 500 pieces unaided, and a history that hid that would flatter
+ * the player rather than inform them.
+ */
+export interface Completion {
+  finishedAt: number;
+  elapsedMs: number;
+  pieceCount: number;
+  rotation: boolean;
+  /** Any assistance switched on at the moment of finishing. */
+  assists: string[];
+}
+
 export interface PuzzleRecord {
   id: string;
   title: string;
@@ -36,6 +53,12 @@ export interface PuzzleRecord {
   progress: number;
   /** Small data-URL preview, so the library lists without decoding every full image. */
   thumbnail: string | null;
+  /** Free text the player keeps with the puzzle. */
+  notes?: string;
+  /** 1..5, set by the player after playing. Null or absent when unrated. */
+  difficulty?: number | null;
+  /** Every time this puzzle has been finished, oldest first. */
+  history?: Completion[];
   /**
    * How the stored image was prepared before cutting — crop, rotation, adjustments.
    *
