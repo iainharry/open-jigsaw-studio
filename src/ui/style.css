@@ -5,6 +5,19 @@
   --text: #e6e9ee;
   --muted: #8d97a6;
   --accent: #6aa9ff;
+  /* Control surfaces. These exist because the first light theme redefined only the six
+     base tokens and every button stayed near-black on white -- the toolbar was
+     unreadable while the assertion for "the theme applied" passed. A colour used by a
+     control belongs in a token, not in the rule. */
+  --control: #1f242c;
+  --control-hover: #262c35;
+  --sunken: #10141a;
+  --on-accent: #0e1013;
+  --warn: #ffc98f;
+  --danger-border: #c2564a;
+  --danger-text: #ff9b8f;
+  --scrim: rgba(6, 8, 11, 0.72);
+  --shadow: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
 }
 
@@ -69,7 +82,7 @@ body {
 .btn,
 .field,
 .title {
-  background: #1f242c;
+  background: var(--control);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -93,7 +106,7 @@ body {
 }
 
 .field select {
-  background: #262c35;
+  background: var(--control-hover);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -109,7 +122,7 @@ body {
 .btn.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0e1013;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -130,7 +143,7 @@ body {
 }
 
 .tray-list {
-  background: #262c35;
+  background: var(--control-hover);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -147,7 +160,7 @@ body {
 .tray-rename {
   position: absolute;
   z-index: 5;
-  background: #10141a;
+  background: var(--sunken);
   color: var(--text);
   border: 1px solid var(--accent);
   border-radius: 5px;
@@ -170,7 +183,7 @@ body {
 /* Pieces are small enough to be a strain -- worth flagging rather than leaving the
    player to wonder why a 500-piece puzzle is unreadable. */
 .zoom-readout.tight {
-  color: #ffc98f;
+  color: var(--warn);
 }
 
 .divider {
@@ -287,7 +300,7 @@ body {
 .name-field .title {
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: #262c35;
+  background: var(--control-hover);
   padding: 4px 7px;
   min-width: 14ch;
 }
@@ -303,7 +316,7 @@ body {
 .library {
   position: fixed;
   inset: 0;
-  background: rgba(6, 8, 11, 0.72);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -351,7 +364,7 @@ body {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #1b2028;
+  background: var(--control);
 }
 
 .lib-card.current {
@@ -364,7 +377,7 @@ body {
   flex: none;
   border-radius: 6px;
   overflow: hidden;
-  background: #11151b;
+  background: var(--sunken);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -403,8 +416,8 @@ body {
 }
 
 .btn.danger {
-  border-color: #c2564a;
-  color: #ff9b8f;
+  border-color: var(--danger-border);
+  color: var(--danger-text);
 }
 
 .foot {
@@ -432,14 +445,14 @@ body {
   position: absolute;
   z-index: 20;
   max-width: 42ch;
-  background: #10141a;
+  background: var(--sunken);
   color: var(--text);
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 8px 11px;
   font-size: 12.5px;
   line-height: 1.45;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px var(--shadow);
   pointer-events: none;
 }
 
@@ -527,7 +540,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0b0d10;
+  background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -683,4 +696,78 @@ body {
   margin-top: 6px;
   display: grid;
   gap: 2px;
+}
+
+/* Light theme. Everything in the chrome is already a custom property, so a theme is a
+   second set of values rather than a second stylesheet. The board itself is canvas and
+   is painted by the renderer from the chosen table colour, not from CSS. */
+:root[data-theme='light'] {
+  --bg: #eef0f4;
+  --panel: #ffffff;
+  --line: #ccd2db;
+  --text: #14181f;
+  --muted: #5a6472;
+  --accent: #2563eb;
+  --control: #e4e8ee;
+  --control-hover: #d7dde6;
+  --sunken: #f7f8fa;
+  --on-accent: #ffffff;
+  --warn: #8a5a12;
+  --danger-border: #c2564a;
+  --danger-text: #a3271a;
+  --scrim: rgba(20, 24, 31, 0.45);
+  --shadow: rgba(20, 24, 31, 0.18);
+  color-scheme: light;
+}
+
+.settings[hidden] {
+  display: none;
+}
+
+.settings {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 12;
+}
+
+.set-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  width: min(420px, 100%);
+  display: grid;
+  gap: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.set-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.set-row select {
+  min-width: 190px;
+}
+
+.set-note {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin: 0;
 }

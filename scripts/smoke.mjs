@@ -1111,6 +1111,121 @@ check('the rating is written to storage', saved.difficulty === 4, String(saved.d
 check('and the completion history survives alongside them', saved.runs === 1, `${saved.runs} run(s)`);
 await page.click('[data-act="close-library"]');
 
+// 12. Settings: theme, table, piece edges, autosave interval, and the save readout.
+await page.click('[data-act="settings"]');
+await page.waitForSelector('.set-panel', { timeout: 10_000 });
+
+const themed = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const board = document.querySelector('.board');
+  const ctx = board.getContext('2d');
+  const corner = () => {
+    const d = ctx.getImageData(2, 2, 1, 1).data;
+    return `${d[0]},${d[1]},${d[2]}`;
+  };
+  const before = corner();
+
+  const table = document.querySelector('.set-table');
+  table.value = 'felt';
+  table.dispatchEvent(new Event('change'));
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const after = corner();
+
+  const theme = document.querySelector('.set-theme');
+  theme.value = 'light';
+  theme.dispatchEvent(new Event('change'));
+  const bodyBg = getComputedStyle(document.body).backgroundColor;
+  const rootTheme = document.documentElement.dataset.theme;
+
+  return { before, after, bodyBg, rootTheme };
+});
+check('the table colour repaints the board', themed.before !== themed.after, `${themed.before} -> ${themed.after}`);
+check('the light theme is applied to the page', themed.rootTheme === 'light', themed.bodyBg);
+
+const edgeSetting = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const before = app.renderer.bakeCache.bakeCount;
+  const sel = document.querySelector('.set-edges');
+  sel.value = 'strong';
+  sel.dispatchEvent(new Event('change'));
+  const cleared = app.renderer.bakeCache.usedBytes;
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return { cleared, rebaked: app.renderer.bakeCache.bakeCount > before };
+});
+check('changing the piece edge throws the bake cache away', edgeSetting.cleared === 0, `${edgeSetting.cleared} bytes`);
+check('and the pieces are baked again', edgeSetting.rebaked === true);
+
+const autosave = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const sel = document.querySelector('.set-autosave');
+  sel.value = '0';
+  sel.dispatchEvent(new Event('change'));
+  app.scheduleSave();
+  const noTimer = app.saveTimer === null;
+  sel.value = '10000';
+  sel.dispatchEvent(new Event('change'));
+  app.scheduleSave();
+  const hasTimer = app.saveTimer !== null;
+  return { noTimer, hasTimer };
+});
+check('"only when pieces join" schedules no idle save', autosave.noTimer === true);
+check('and an interval does schedule one', autosave.hasTimer === true);
+
+// Preferences are per device, so they belong in localStorage and must survive a reload.
+await page.evaluate(() => (document.querySelector('.set-theme').value));
+await page.reload();
+await page.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await page.waitForTimeout(500);
+const persisted = await page.evaluate(() => ({
+  theme: document.documentElement.dataset.theme,
+  table: document.querySelector('.set-table').value,
+  edges: document.querySelector('.set-edges').value,
+  autosave: document.querySelector('.set-autosave').value,
+  stats: document.querySelector('.stats').textContent,
+}));
+check('the theme survives a reload', persisted.theme === 'light', persisted.theme);
+check('the table survives a reload', persisted.table === 'felt', persisted.table);
+check('the edge setting survives a reload', persisted.edges === 'strong', persisted.edges);
+check('the autosave choice survives a reload', persisted.autosave === '10000', persisted.autosave);
+
+const savedNote = await page.evaluate(async () => {
+  await globalThis.__ojs.save();
+  globalThis.__ojs.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return document.querySelector('.stats').textContent;
+});
+check('the footer reports when the puzzle last saved', /saved /.test(savedNote), savedNote.split('·').pop().trim());
+
+// A theme that sets the page background but leaves the controls hard-coded passes any
+// "is the theme applied" check while being unusable -- which is exactly what the first
+// light theme did: white chrome, near-black buttons, dark text on them. Contrast is the
+// property that actually matters, so measure it.
+const contrast = await page.evaluate(async () => {
+  const lum = (css) => {
+    const [r, g, b] = css.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+    const f = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+  const measure = () => {
+    const btn = document.querySelector('.btn:not(:disabled)');
+    const cs = getComputedStyle(btn);
+    return ratio(cs.color, cs.backgroundColor);
+  };
+  const set = async (theme) => {
+    const sel = document.querySelector('.set-theme');
+    sel.value = theme;
+    sel.dispatchEvent(new Event('change'));
+    await new Promise((r) => requestAnimationFrame(r));
+    return measure();
+  };
+  return { light: await set('light'), dark: await set('dark') };
+});
+check('toolbar buttons are legible in the light theme', contrast.light >= 4.5, `${contrast.light.toFixed(1)}:1`);
+check('and in the dark theme', contrast.dark >= 4.5, `${contrast.dark.toFixed(1)}:1`);
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

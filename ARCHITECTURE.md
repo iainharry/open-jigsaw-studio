@@ -1,7 +1,8 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M7 (engine, selection, rotation, library, trays,
-colour sorting, shipping, image preparation, and assistance levels).
+Status of this document: covers M1 to M9 (engine, selection, rotation, library, trays,
+colour sorting, shipping, image preparation, assistance levels, notes and history, and
+appearance/autosave/sharing).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -634,7 +635,52 @@ IndexedDB**, not out of the in-memory record. Asserting against the object in me
 have passed, because `Object.assign` had updated it — the loss was only in what was
 stored.
 
-## 20. Known limitations after M2
+## 20. Appearance, autosave and sharing
+
+The last of the original brief, and one item of it was worth arguing with.
+
+**"Autosave at configurable intervals" is not really a request for an interval.** A save
+here is a few kilobytes of JSON into IndexedDB and already happens on every merge; the
+best value for the setting is the default. What the request is actually about is
+*confidence that the work is safe*, and an interval control does not provide that — a
+readout does. So the footer now says when the last save landed, and says NOT SAVING if one
+has failed. The interval is offered too, because it was asked for and costs nothing, with
+"only when pieces join" as the honest floor: that is not "never saved", since a merge and
+any library edit still save.
+
+**Appearance is theme, table and piece edge.** Chrome colours are CSS custom properties;
+the board is canvas, painted by the renderer, so a table colour has to exist as a value a
+canvas can fill with rather than as a stylesheet rule. The piece edge is baked into each
+piece rather than stroked per frame — stroking two thousand outlines every frame costs a
+frame budget, and the edge only changes when the setting does, so changing it clears the
+bake cache and takes a one-off rebake of what is on screen.
+
+Preferences live in localStorage, not in the puzzle record: a puzzle carried to another
+machine on a `.jigsaw` file should look the way *that* machine is set up. They are read
+back field by field rather than spread over the defaults, because localStorage is
+user-writable and survives across versions — a stale table name would otherwise become a
+board colour with no explanation.
+
+**Sharing can only honestly mean the file.** There is no server and no account, so a share
+is the self-contained `.jigsaw` handed to whatever app the device offers, via the Web Share
+API. That is most of the value on a tablet, where a download is awkward to find afterwards.
+The button appears only where the API exists; Export remains the desktop path. A cancelled
+share rejects with `AbortError` and is not reported as a failure.
+
+### The light theme passed its test and was unusable
+
+Worth recording because it is the same mistake as the hints, in a different costume. The
+first light theme redefined the six base tokens, `data-theme` was set, the page background
+went white, and the assertion passed. A screenshot showed a white toolbar full of
+near-black buttons with dark text on them — every control had its colour hard-coded in its
+own rule rather than taken from a token.
+
+Control surfaces are now tokens too (`--control`, `--sunken`, `--scrim`, and the rest), and
+the smoke test measures the thing that actually matters: the WCAG contrast ratio between a
+toolbar button's text and its background, in both themes, required to be at least 4.5:1.
+"The theme was applied" was never the property worth asserting; "you can read it" is.
+
+## 21. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

@@ -61,6 +61,12 @@ export interface BakeCacheOptions {
   readonly maxScale?: number;
   /** Draw a soft edge highlight so pieces read against each other. */
   readonly bevel?: boolean;
+  /**
+   * Multiplier on the moulded edge. 0 draws no edge at all, 1 is the original weight.
+   * Baked in rather than stroked per frame: stroking two thousand outlines every frame
+   * costs a frame budget, and the edge never changes between bakes.
+   */
+  readonly edgeScale?: number;
 }
 
 export class BakeCache {
@@ -68,6 +74,7 @@ export class BakeCache {
   private readonly budgetBytes: number;
   readonly maxScale: number;
   private readonly bevel: boolean;
+  private edgeScaleValue: number;
   private bytes = 0;
   /** Bakes performed, so the renderer can tell a one-off rasterising frame from a normal one. */
   bakeCount = 0;
@@ -79,6 +86,7 @@ export class BakeCache {
     this.budgetBytes = options.budgetBytes ?? 96 * 1024 * 1024;
     this.maxScale = options.maxScale ?? 1;
     this.bevel = options.bevel ?? true;
+    this.edgeScaleValue = options.edgeScale ?? 1;
   }
 
   setSource(image: CanvasImageSource, width: number, height: number): void {
@@ -130,6 +138,13 @@ export class BakeCache {
     }
   }
 
+  /** Change the edge weight. Every cached bake carries the old one, so all of it goes. */
+  setEdgeScale(value: number): void {
+    if (this.edgeScaleValue === value) return;
+    this.edgeScaleValue = value;
+    this.clear();
+  }
+
   private bake(piece: PieceGeometry, scale: number): BakedPiece | null {
     if (!this.source) return null;
     const w = Math.max(1, Math.ceil(piece.bounds.w * scale));
@@ -157,14 +172,15 @@ export class BakeCache {
     );
     ctx.restore();
 
-    if (this.bevel) {
+    if (this.bevel && this.edgeScaleValue > 0) {
+      const e = this.edgeScaleValue;
       ctx.save();
       ctx.clip(path);
-      ctx.lineWidth = Math.max(1, 1.6 * scale);
-      ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+      ctx.lineWidth = Math.max(1, 1.6 * scale * e);
+      ctx.strokeStyle = `rgba(0,0,0,${Math.min(0.6, 0.3 * e)})`;
       ctx.stroke(path);
-      ctx.lineWidth = Math.max(0.5, 0.7 * scale);
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = Math.max(0.5, 0.7 * scale * e);
+      ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.45, 0.22 * e)})`;
       ctx.stroke(path);
       ctx.restore();
     }

@@ -61,6 +61,17 @@ import {
 } from './backupFolder.js';
 import { buildPuzzleFile, puzzleFileToBlob, readPuzzleFile, safeFileName } from './puzzleFile.js';
 import {
+  AUTOSAVE_CHOICES,
+  EDGE_SCALE,
+  TABLES,
+  formatAgo,
+  loadAppearance,
+  saveAppearance,
+  type Appearance,
+  type EdgeStrength,
+  type TableName,
+} from './appearance.js';
+import {
   deletePuzzle,
   getImage,
   getLastOpened,
@@ -86,7 +97,6 @@ const PIECE_CHOICES = [12, 20, 50, 100, 200, 300, 500, 1000, 2000];
  * point where a mid-range tablet starts to care.
  */
 const MAX_IMAGE_EDGE = 5000;
-const AUTOSAVE_MS = 20_000;
 const GEOMETRY_OPTIONS: GeometryOptions = { vertexJitter: 0.06, tabScale: 1, randomiseTabs: true };
 
 export type RefMode = 'right' | 'bottom' | 'off';
@@ -129,6 +139,9 @@ export class App {
   private viewport: Viewport = { x: 0, y: 0, zoom: 1 };
   private dirty = true;
   private saveTimer: number | null = null;
+  private appearance: Appearance = loadAppearance();
+  /** When the last successful save landed, for the footer readout. */
+  private lastSavedAt: number | null = null;
   /** Serialises library edits so two quick changes cannot overwrite one another. */
   private recordWrites: Promise<void> = Promise.resolve();
   /** True once a save has failed, so the warning is given once rather than every autosave. */
@@ -163,6 +176,12 @@ export class App {
     ghost: HTMLInputElement;
     hints: HTMLButtonElement;
     hintFind: HTMLButtonElement;
+    settings: HTMLElement;
+    setTheme: HTMLSelectElement;
+    setTable: HTMLSelectElement;
+    setEdges: HTMLSelectElement;
+    setAutosave: HTMLSelectElement;
+    setNote: HTMLElement;
     edgesOnly: HTMLButtonElement;
   };
 
@@ -207,6 +226,9 @@ export class App {
     this.root = root;
     this.buildDom();
     this.renderer = new Renderer(this.canvas);
+    // After the renderer, not inside buildDom: applying appearance sets the board colour
+    // and the bake edge weight, both of which live on the renderer.
+    this.setupAppearance();
     this.input = new PointerInput(this.canvas, this.renderer, {
       getState: () => this.session?.state ?? null,
       getViewport: () => this.viewport,
@@ -357,6 +379,7 @@ export class App {
             <button class="btn hint-find" data-act="hint-find" hidden data-help="Move the view so the selected piece and its outlined neighbours are all on screen at once. Nothing is moved on the board — only the view.">Find</button>
             <button class="btn" data-act="edges-only" data-help="Hide every piece that is not part of the border, so you can build the frame without the rest in the way. Nothing is lost — switch it off to bring them back.">Edges only</button>
           </span>
+          <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           <span class="spacer"></span>
           <span class="status"></span>
@@ -372,6 +395,33 @@ export class App {
         </main>
         <footer class="foot"><span class="stats"></span></footer>
         <div class="tip" hidden></div>
+        <div class="settings" hidden>
+          <div class="set-panel">
+            <div class="set-head"><strong>Settings</strong>
+              <button class="btn" data-act="close-settings">Close</button>
+            </div>
+            <label class="set-row">Theme
+              <select class="set-theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+            <label class="set-row">Table
+              <select class="set-table"></select>
+            </label>
+            <label class="set-row">Piece edges
+              <select class="set-edges">
+                <option value="off">Flat</option>
+                <option value="subtle">Subtle</option>
+                <option value="strong">Strong</option>
+              </select>
+            </label>
+            <label class="set-row">Autosave
+              <select class="set-autosave"></select>
+            </label>
+            <p class="set-note"></p>
+          </div>
+        </div>
         <div class="library" hidden>
           <div class="lib-panel">
             <div class="lib-head">
@@ -418,6 +468,12 @@ export class App {
       ghost: q<HTMLInputElement>('.ghost'),
       hints: q<HTMLButtonElement>('[data-act="hints"]'),
       hintFind: q<HTMLButtonElement>('.hint-find'),
+      settings: q<HTMLElement>('.settings'),
+      setTheme: q<HTMLSelectElement>('.set-theme'),
+      setTable: q<HTMLSelectElement>('.set-table'),
+      setEdges: q<HTMLSelectElement>('.set-edges'),
+      setAutosave: q<HTMLSelectElement>('.set-autosave'),
+      setNote: q<HTMLElement>('.set-note'),
       edgesOnly: q<HTMLButtonElement>('[data-act="edges-only"]'),
     };
     this.setupHelp();
@@ -445,6 +501,8 @@ export class App {
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
+      else if (act === 'settings') this.els.settings.hidden = false;
+      else if (act === 'close-settings') this.els.settings.hidden = true;
       else if (act === 'backup-folder') void this.chooseBackupFolder();
       else if (act === 'help') this.setHelpMode(!this.helpMode);
       else if (act === 'select-edges') this.selectEdges();
@@ -1079,6 +1137,77 @@ export class App {
     this.dirty = true;
   }
 
+  /**
+   * Build the settings panel and apply what is stored.
+   *
+   * Appearance is applied at startup before the first frame, so the app never flashes the
+   * default theme on the way to the chosen one.
+   */
+  private setupAppearance(): void {
+    for (const [name, table] of Object.entries(TABLES)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = table.label;
+      this.els.setTable.append(opt);
+    }
+    for (const choice of AUTOSAVE_CHOICES) {
+      const opt = document.createElement('option');
+      opt.value = String(choice.value);
+      opt.textContent = choice.label;
+      this.els.setAutosave.append(opt);
+    }
+
+    this.els.setTheme.addEventListener('change', () => {
+      this.appearance.theme = this.els.setTheme.value === 'light' ? 'light' : 'dark';
+      this.applyAppearance();
+    });
+    this.els.setTable.addEventListener('change', () => {
+      this.appearance.table = this.els.setTable.value as TableName;
+      this.applyAppearance();
+    });
+    this.els.setEdges.addEventListener('change', () => {
+      this.appearance.edges = this.els.setEdges.value as EdgeStrength;
+      this.applyAppearance();
+    });
+    this.els.setAutosave.addEventListener('change', () => {
+      this.appearance.autosaveMs = Number(this.els.setAutosave.value);
+      this.applyAppearance();
+    });
+
+    this.els.settings.addEventListener('click', (e) => {
+      if (e.target === this.els.settings) this.els.settings.hidden = true;
+    });
+
+    this.applyAppearance();
+  }
+
+  private applyAppearance(): void {
+    const table = TABLES[this.appearance.table];
+    document.documentElement.dataset['theme'] = this.appearance.theme;
+    this.renderer.background = table.background;
+    this.renderer.boardTint = table.boardTint;
+    // Edge weight is baked into each piece, so changing it throws the cache away. That is
+    // a one-off rebake of what is on screen, not a per-frame cost.
+    this.renderer.bakeCache.setEdgeScale(EDGE_SCALE[this.appearance.edges]);
+
+    this.els.setTheme.value = this.appearance.theme;
+    this.els.setTable.value = this.appearance.table;
+    this.els.setEdges.value = this.appearance.edges;
+    this.els.setAutosave.value = String(this.appearance.autosaveMs);
+    this.els.setNote.textContent =
+      this.appearance.autosaveMs === 0
+        ? 'A save always follows pieces joining and any change in My puzzles. This setting only governs the idle save that catches pieces moved without being joined.'
+        : 'A save also follows every time pieces join, so this interval is a backstop rather than the only save.';
+
+    // A pending timer was scheduled against the old interval.
+    if (this.saveTimer !== null) {
+      window.clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    saveAppearance(this.appearance);
+    this.dirty = true;
+  }
+
   /** Which aids were switched on, for recording beside a finishing time. */
   private activeAssists(): string[] {
     const on: string[] = [];
@@ -1590,6 +1719,10 @@ export class App {
 
       const pct = Math.round(record.progress * 100);
       // Best is the fastest finish, which is the number worth putting on the card.
+      // Web Share with files is the honest form of sharing here: there is no server to
+      // upload to, so a share is the .jigsaw file handed to whatever app the device
+      // offers. Absent on desktop Chrome, which is why Export stays.
+      const canShare = typeof navigator.canShare === 'function';
       const best = (record.history ?? []).reduce<Completion | null>(
         (b, c) => (b === null || c.elapsedMs < b.elapsedMs ? c : b),
         null,
@@ -1640,6 +1773,7 @@ export class App {
               : '<button class="btn lib-open">Open</button>'
           }
           <button class="btn lib-export" title="Save as a .jigsaw file">Export</button>
+          ${canShare ? '<button class="btn lib-share" title="Send this puzzle to another app">Share</button>' : ''}
           <button class="btn lib-delete" title="Delete this puzzle">Delete</button>
         </div>`;
       // Set the title as text, never as HTML: it is user input.
@@ -1687,6 +1821,9 @@ export class App {
       card.querySelector<HTMLButtonElement>('.lib-export')!.addEventListener('click', () => {
         void this.exportPuzzle(record);
       });
+      card.querySelector<HTMLButtonElement>('.lib-share')?.addEventListener('click', () => {
+        void this.sharePuzzle(record);
+      });
       card.querySelector<HTMLButtonElement>('.lib-delete')!.addEventListener('click', (e) => {
         void this.deleteFromLibrary(record, e.currentTarget as HTMLButtonElement);
       });
@@ -1718,6 +1855,34 @@ export class App {
       this.setLibraryNote(`Saved \u201c${record.title}\u201d as a .jigsaw file.`);
     } catch (err) {
       this.setLibraryNote(`Could not export: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Hand a puzzle to another app on the device.
+   *
+   * There is no server and no account, so "share" cannot mean a link — it means the
+   * self-contained `.jigsaw` file passed to whatever the device offers: mail, a chat app,
+   * a synced folder. That is most of the value on a tablet, where a download is awkward
+   * to find afterwards. On a desktop browser without the API, Export is still the path.
+   */
+  private async sharePuzzle(record: PuzzleRecord): Promise<void> {
+    try {
+      const image = await getImage(record.imageHash);
+      if (!image) throw new Error('the picture for this puzzle is missing');
+      const blob = puzzleFileToBlob(await buildPuzzleFile(record, image));
+      const file = new File([blob], safeFileName(record.title), { type: 'application/json' });
+
+      if (!navigator.canShare?.({ files: [file] })) {
+        this.setLibraryNote('This browser will not share files — use Export instead.');
+        return;
+      }
+      await navigator.share({ files: [file], title: record.title });
+      this.setLibraryNote(`Shared \u201c${record.title}\u201d.`);
+    } catch (err) {
+      // A cancelled share rejects with AbortError, which is not a failure to report.
+      if ((err as Error).name === 'AbortError') return;
+      this.setLibraryNote(`Could not share: ${(err as Error).message}`);
     }
   }
 
@@ -1994,6 +2159,7 @@ export class App {
 
     try {
       await putPuzzle(record);
+      this.lastSavedAt = Date.now();
       if (this.saveFailed) {
         this.saveFailed = false;
         this.setStatus('Saving again — your progress is stored.');
@@ -2011,11 +2177,14 @@ export class App {
   }
 
   private scheduleSave(): void {
-    if (this.saveTimer !== null) return;
+    // Zero means "only when pieces join", which is not "never": every merge saves, and so
+    // does every library edit. This timer is the backstop for pieces shuffled about
+    // without being joined to anything.
+    if (this.appearance.autosaveMs === 0 || this.saveTimer !== null) return;
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
       void this.save();
-    }, AUTOSAVE_MS);
+    }, this.appearance.autosaveMs);
   }
 
   // --- Frame loop -----------------------------------------------------------
@@ -2047,7 +2216,17 @@ export class App {
       `~${piecePx}px on screen · ` +
       `${s.piecesDrawn} drawn, ${s.piecesCulled} culled · ` +
       `${s.medianFrameMs.toFixed(1)} ms/frame · ${mb} MB baked · ` +
-      `${this.session.state.clusters.size} groups`;
+      `${this.session.state.clusters.size} groups · ` +
+      // The real want behind "configurable autosave" is confidence that the work is
+      // safe, which an interval setting does not give you. Saying when the last save
+      // landed does.
+      `${
+        this.saveFailed
+          ? 'NOT SAVING'
+          : this.lastSavedAt === null
+            ? 'not saved yet'
+            : `saved ${formatAgo(Date.now() - this.lastSavedAt)}`
+      }`;
   }
 
   private updateStatus(): void {

@@ -147,6 +147,30 @@ at 45% is a different afternoon from 500 pieces unaided — so the app writes do
 actually cost you. The card shows your best time. Shuffling a finished puzzle makes it
 unfinished again, so playing it a second time adds a second entry.
 
+## Settings
+
+**Theme** switches between dark and light. **Table** is the surface the pieces lie on —
+slate, green felt, oak or near-black. **Piece edges** controls how pronounced the moulded
+edge on each piece is; it is baked into the pieces, so changing it redraws them once
+rather than costing anything per frame.
+
+**Autosave** sets how often an idle save happens. Worth knowing what it does and does not
+control: a save *always* follows pieces joining and any change in My puzzles, so
+"Only when pieces join" is not "never saved" — the interval is only the backstop that
+catches pieces shuffled about without being joined to anything. The footer tells you when
+the last save landed, which is the thing actually worth knowing, and says so loudly if a
+save has failed.
+
+Settings are per device, not per puzzle: a puzzle you carry to another machine looks the
+way that machine is set up.
+
+## Sharing a puzzle
+
+On a phone or tablet, each card in **My puzzles** has a **Share** button that hands the
+`.jigsaw` file to whatever app you like — mail, a chat app, a synced folder. There is no
+server and no account, so a share is the file itself rather than a link. On a desktop
+browser without file sharing, Export does the same job.
+
 ## Trays
 
 A tray is a named holding area — the digital equivalent of tipping the sky pieces into a
@@ -242,10 +266,11 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
 edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
-preparation, assistance levels, and notes/difficulty/history. Next: the unbuilt half of the
-original brief — autosave interval, appearance, sharing. Deliberately deferred: tags and
-search, which solve a problem a five-puzzle library does not have.
-`ARCHITECTURE.md` §20 lists what is deliberately not built.
+preparation, assistance levels, notes/difficulty/history, and appearance, autosave and sharing — which
+completes the original brief. Deliberately deferred: tags and search, which solve a problem
+a five-puzzle library does not have, and a TV/remote-control interface, which is a
+different input model rather than a layout change.
+`ARCHITECTURE.md` §21 lists what is deliberately not built.
 
 ## Licence
 
