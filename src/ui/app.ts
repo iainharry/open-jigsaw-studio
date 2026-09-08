@@ -1571,8 +1571,19 @@ export class App {
    */
   private nameSelectedGroup(): void {
     if (!this.session) return;
+
+    // Several separate groups selected: that is a collection of loose pieces, which is
+    // what a tray is for. Reported as "nothing happens" — the old behaviour refused with
+    // a status message at the far end of the toolbar, which is not a visible refusal, and
+    // pointing at another button would still leave the press wasted. Naming the selection
+    // is what was asked for; a named tray is the honest form of it.
     if (this.selection.size > 1) {
-      this.setStatus(`Name one group at a time — ${this.selection.size} are selected.`);
+      const separate = this.selection.size;
+      this.newTray();
+      this.setStatus(
+        `${separate} separate groups — collected into a tray you can name. ` +
+          `Name group names one joined assembly; a tray holds pieces that are not joined.`,
+      );
       return;
     }
 
@@ -1604,12 +1615,44 @@ export class App {
     input.dataset['trayId'] = '';
     input.dataset['clusterId'] = String(clusterId);
     input.hidden = false;
-    input.style.left = `${canvasBox.left - stageBox.left + tl.x}px`;
-    input.style.top = `${canvasBox.top - stageBox.top + tl.y - 26}px`;
-    input.style.width = `${Math.max(120, Math.min(260, (bounds.maxX - bounds.minX) * this.viewport.zoom))}px`;
+    const width = Math.max(120, Math.min(260, (bounds.maxX - bounds.minX) * this.viewport.zoom));
+    input.style.width = `${width}px`;
     input.style.height = '24px';
+    this.placeInlineField(
+      input,
+      canvasBox.left - stageBox.left + tl.x,
+      canvasBox.top - stageBox.top + tl.y - 26,
+      width,
+      24,
+    );
     input.focus();
     input.select();
+  }
+
+  /**
+   * Put the inline field where it can actually be seen.
+   *
+   * The group being named can be anywhere — half off the top of the board, below the
+   * footer, or scrolled out of view entirely — and a field positioned faithfully over it
+   * is then a field nobody can type into. Reported as "I click Name group and nothing
+   * happens": it was happening, 796 pixels down an 820 pixel window, behind the footer.
+   *
+   * The same mistake as the hint outlines, and the same lesson: putting something where
+   * the thing it belongs to *is* is not the same as putting it where it can be seen.
+   */
+  private placeInlineField(
+    input: HTMLInputElement,
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+  ): void {
+    const stage = this.els.stage.getBoundingClientRect();
+    const margin = 8;
+    const maxLeft = Math.max(margin, stage.width - width - margin);
+    const maxTop = Math.max(margin, stage.height - height - margin);
+    input.style.left = `${Math.min(Math.max(margin, left), maxLeft)}px`;
+    input.style.top = `${Math.min(Math.max(margin, top), maxTop)}px`;
   }
 
   private commitGroupName(clusterId: number, name: string): void {
@@ -2139,10 +2182,17 @@ export class App {
     input.dataset['trayId'] = String(trayId);
     input.dataset['clusterId'] = '';
     input.hidden = false;
-    input.style.left = `${canvasBox.left - stageBox.left + tl.x + 2}px`;
-    input.style.top = `${canvasBox.top - stageBox.top + tl.y + 2}px`;
-    input.style.width = `${Math.max(90, b.w * this.viewport.zoom - 4)}px`;
-    input.style.height = `${Math.max(20, header * this.viewport.zoom - 4)}px`;
+    const w = Math.max(90, b.w * this.viewport.zoom - 4);
+    const h = Math.max(20, header * this.viewport.zoom - 4);
+    input.style.width = `${w}px`;
+    input.style.height = `${h}px`;
+    this.placeInlineField(
+      input,
+      canvasBox.left - stageBox.left + tl.x + 2,
+      canvasBox.top - stageBox.top + tl.y + 2,
+      w,
+      h,
+    );
     input.focus();
     input.select();
   }

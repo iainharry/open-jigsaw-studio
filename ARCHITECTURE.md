@@ -923,6 +923,29 @@ Name group now falls back to the piece you last touched, sharing the mechanism h
 already use. The smoke test asserts the whole path: a plain click selects nothing, and
 Name group works anyway.
 
+### And then it still did nothing
+
+Reported again: "can highlight pieces, but when I click Name Group nothing happens." Two
+separate faults, and the test I had just written passed through both.
+
+**Highlighting several pieces selects several separate groups**, and the button refused
+with a status message at the far end of the toolbar — which is not a visible refusal. The
+concepts are genuinely different: a name belongs to one joined assembly, while a handful
+of unjoined pieces is what a tray is for. But pointing at another button still leaves the
+press wasted, so Name group with several groups selected now collects them into a tray and
+opens its name field, and says plainly which is which.
+
+**The name field was landing off-screen.** Measured: 796 pixels down an 820 pixel window,
+behind the footer. Positioned faithfully over the group being named, which is worthless
+when the group is near the edge of the board — and the field is now clamped into the
+stage, trays included.
+
+The test asserted `!input.hidden`. The field *was* not hidden. It was shown and unusable —
+which is precisely the hint-outline mistake again: **putting something where the thing it
+belongs to is, is not the same as putting it where it can be seen**, and asserting that
+something is displayed is not asserting that it is visible. Both naming checks now measure
+the field's rectangle against the window.
+
 ## 25. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There

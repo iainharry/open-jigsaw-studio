@@ -1374,7 +1374,16 @@ const groupNamed = await page.evaluate(async () => {
 
   document.querySelector('[data-act="name-group"]').click();
   const input = document.querySelector('.tray-rename');
-  const offered = !input.hidden;
+  // Not `!hidden`: the field was shown, 796 pixels down an 820 pixel window, behind the
+  // footer -- shown and unusable, which is what "nothing happens" looked like.
+  const box = input.getBoundingClientRect();
+  const offered =
+    !input.hidden &&
+    box.width > 20 &&
+    box.left >= 0 &&
+    box.top >= 0 &&
+    box.right <= window.innerWidth &&
+    box.bottom <= window.innerHeight;
   input.value = 'The lighthouse';
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   await new Promise((r) => setTimeout(r, 250));
@@ -1388,7 +1397,7 @@ const groupNamed = await page.evaluate(async () => {
     target,
   };
 });
-check('naming offers an inline field on the group', groupNamed.offered === true);
+check('naming offers a field that is actually on screen', groupNamed.offered === true);
 check('the name reaches the cluster', groupNamed.stored === 'The lighthouse', String(groupNamed.stored));
 check('and appears in the Groups list', groupNamed.options.some((t) => t.includes('The lighthouse')), groupNamed.options.join(' | '));
 check('the Groups list becomes usable once something is named', groupNamed.enabled === true);
@@ -1441,6 +1450,38 @@ const groupsAfterReload = await page.evaluate(() => {
 });
 check('a group name survives a reload', groupsAfterReload.names.includes('The lighthouse'), groupsAfterReload.names.join(', ') || 'none');
 check('and the Groups list is rebuilt from it', groupsAfterReload.options.some((t) => t.includes('The lighthouse')));
+
+// Reported: "can highlight pieces, but clicking Name group does nothing". Highlighting
+// several pieces selects several *separate* groups, which the button used to refuse with
+// a status message at the far end of the toolbar -- not a visible refusal.
+const multiName = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const trays = st.trays.size;
+  const ids = [...st.clusters.keys()].slice(0, 3);
+  app.selection.clear();
+  for (const id of ids) app.selection.add(id);
+  app.syncSelection();
+
+  document.querySelector('[data-act="name-group"]').click();
+  await new Promise((r) => setTimeout(r, 150));
+  const input = document.querySelector('.tray-rename');
+  const box = input.getBoundingClientRect();
+  return {
+    traysBefore: trays,
+    traysAfter: st.trays.size,
+    offered:
+      !input.hidden &&
+      box.left >= 0 &&
+      box.top >= 0 &&
+      box.right <= window.innerWidth &&
+      box.bottom <= window.innerHeight,
+    status: document.querySelector('.status').textContent,
+  };
+});
+check('several separate groups are collected into a tray', multiName.traysAfter === multiName.traysBefore + 1, `${multiName.traysBefore} -> ${multiName.traysAfter} trays`);
+check('and it offers a visible field to name it', multiName.offered === true);
+check('the status explains the difference', /tray/i.test(multiName.status), multiName.status.slice(0, 70));
 
 // 15. Free-form rules: any arrangement that fills the frame.
 const rulesSet = await page.evaluate(async () => {
@@ -1688,7 +1729,13 @@ const nameByTouch = await page.evaluate(async (fireSrc) => {
   const selectedAfterClick = app.selection.size;
   document.querySelector('[data-act="name-group"]').click();
   const input = document.querySelector('.tray-rename');
-  const offered = !input.hidden;
+  const box = input.getBoundingClientRect();
+  const offered =
+    !input.hidden &&
+    box.left >= 0 &&
+    box.top >= 0 &&
+    box.right <= window.innerWidth &&
+    box.bottom <= window.innerHeight;
   if (offered) {
     input.value = 'Touched group';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

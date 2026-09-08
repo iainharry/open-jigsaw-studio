@@ -166,7 +166,10 @@ where a piece was originally cut from, which is neither a hint nor the only righ
 
 ## Naming a group
 
-Touch a piece and press **Name group**. Type a name — "the lighthouse",
+Touch a piece and press **Name group**. If you have highlighted several *separate* pieces
+rather than one joined assembly, the same button collects them into a tray and offers to
+name that instead — a name belongs to one joined group, while a tray is the right home for
+a handful of pieces that are not joined to each other. Type a name — "the lighthouse",
 "top left sky" — and it appears on the board above that group and in the **Groups** list
 in the toolbar. Choosing it from the list selects the group and brings it into view,
 however far away it has drifted.
