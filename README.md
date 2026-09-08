@@ -56,7 +56,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 177 headless engine tests, ~2 s |
+| `npm test` | 198 headless engine tests, ~2 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -146,6 +146,23 @@ you finished. A bare time is not comparable with another one — 500 pieces with
 at 45% is a different afternoon from 500 pieces unaided — so the app writes down what it
 actually cost you. The card shows your best time. Shuffling a finished puzzle makes it
 unfinished again, so playing it a second time adds a second entry.
+
+## Any fit: the packing puzzle
+
+**Rules** switches between *Match the picture* — the ordinary jigsaw, where every piece has
+one home — and **Any fit**, where any arrangement that fills the frame counts. That turns
+it into a packing puzzle with a great many solutions rather than one.
+
+Any fit needs shape pieces with flat edges, and switches those on for you: a tab only
+interlocks in the arrangement it was cut for, so it cannot work otherwise. Pieces do not
+join together in this mode, because two shapes side by side in your layout are not really
+connected — you may pull one out again a minute later. Progress is how much of the frame
+you have covered, and the puzzle is finished when the frame is full, wherever each piece
+came from.
+
+Turn **Rotation** on to make it properly hard: then you have to find the right orientation
+as well as the right hole. Hints are switched off under these rules — they would point at
+where a piece was originally cut from, which is neither a hint nor the only right answer.
 
 ## Naming a group
 
@@ -299,10 +316,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
 edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
 preparation, assistance levels, notes/difficulty/history, appearance, autosave and sharing — which
-completes the original brief — a second cut that makes shape pieces, and named groups. Deliberately deferred: tags and search, which solve a problem
+completes the original brief — a second cut that makes shape pieces, named groups, and free-form solving. Deliberately deferred: tags and search, which solve a problem
 a five-puzzle library does not have, and a TV/remote-control interface, which is a
 different input model rather than a layout change.
-`ARCHITECTURE.md` §23 lists what is deliberately not built.
+`ARCHITECTURE.md` §24 lists what is deliberately not built.
 
 ## Licence
 

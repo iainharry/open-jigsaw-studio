@@ -1,8 +1,8 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M11 (engine, selection, rotation, library, trays,
+Status of this document: covers M1 to M12 (engine, selection, rotation, library, trays,
 colour sorting, shipping, image preparation, assistance levels, notes and history,
-appearance/autosave/sharing, the polyomino cut, accessible colours and named groups).
+appearance/autosave/sharing, the polyomino cut, accessible colours, named groups and free-form solving).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -20,7 +20,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 177 current tests run headless in about 2 seconds. If engine code ever needs jsdom, the
+All 198 current tests run headless in about 2 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -813,7 +813,56 @@ It cost a button, a jump list and a label, exactly as M1 predicted. Three detail
 The inline rename field is shared with trays rather than duplicated: it is the same
 interaction, and one of them is enough to keep working.
 
-## 23. Known limitations after M2
+## 23. Free-form solving: any arrangement that fills the frame
+
+The ordinary puzzle has exactly one solution because snapping asks "is my neighbour where
+it should be relative to me" — it is keyed to *identity*. A pentomino puzzle asks
+something else entirely: does this shape fit that hole. Two consequences follow, and both
+are forced rather than chosen.
+
+**Pieces do not merge.** Two shapes side by side in your arrangement are not connected in
+any meaningful sense — you may well pull one out again. Merging would glue together a
+layout you are still experimenting with. So a piece stays its own cluster for the whole
+game, and progress is *coverage of the board* rather than how much is joined.
+
+**Edges must be flat.** A tab is complementary to exactly one socket in exactly one
+arrangement; put the piece elsewhere and tabs collide. Choosing Any fit therefore switches
+the cut to shapes and the edges to flat and says so, rather than letting someone select a
+combination that cannot work and then explaining the wreckage.
+
+**Hints are silenced.** They name the neighbours a piece was *cut* beside, which under
+these rules is not a hint but the original solution — and a misleading one, since any
+arrangement counts.
+
+The placement maths leans on a property the flat cut already guarantees and already has a
+test for: a flat piece's bounding box is exactly its cell rectangle. So a placement reads
+off the piece's world bounding box — round its top-left to the nearest cell — with no
+pivot arithmetic at all, and quarter turns keep the box axis-aligned so the trick survives
+rotation. Occupancy is derived from where pieces actually sit rather than tracked
+alongside them, for the same reason geometry is derived from the seed: a derived value
+cannot drift out of step with the thing it describes.
+
+`findBoardSnap` considers only the nearest cell and the eight around it. Searching the
+whole board would let a piece dropped in the scatter leap across the screen into a hole it
+happens to fit, which is not a snap — it is the app playing for you.
+
+The release rule is supplied by the app through a `releaseRule` callback rather than
+taught to the input layer, which stays about pointers and knows nothing about rulebooks.
+
+### Two bugs, one of them mine and one of them the test's
+
+`onDrop` saved only when `result.merges > 0`. Free-form never merges, so every placement
+went unsaved and progress never moved — the smoke test read "0% -> 0%" and was right to.
+
+The other was the test. A synthesised drag for this check kept failing while the same
+release, run in isolation through real pointer events, snapped exactly. The pointer path
+is already covered twice — the classic snap test and the shape-cut drag test both go
+through pointerdown/move/up — so what is specific to free-form is the *rule*, and the
+check now drives the rule and says so. Writing a third pointer-level test that was
+sensitive to whatever mode and zoom earlier sections left behind would have bought
+nothing, and pretending it tested the drag would have been worse.
+
+## 24. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

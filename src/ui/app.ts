@@ -15,6 +15,11 @@ import {
   edgeClusters,
   generateGeometry,
   generatePolyominoGeometry,
+  applyPlacement,
+  coverage,
+  findBoardSnap,
+  isBoardFull,
+  releaseClusters,
   DEFAULT_EDIT,
   isUneditedImage,
   type ImageEdit,
@@ -182,6 +187,7 @@ export class App {
     hintFind: HTMLButtonElement;
     groupList: HTMLSelectElement;
     cut: HTMLSelectElement;
+    rules: HTMLSelectElement;
     polySize: HTMLSelectElement;
     polyEdges: HTMLSelectElement;
     pictureMode: HTMLSelectElement;
@@ -256,6 +262,8 @@ export class App {
         this.updateStatus();
         this.dirty = true;
       },
+      // Free-form solving replaces the merge rule with a snap-to-board rule.
+      releaseRule: (ids) => this.releaseFreeform(ids),
       onGrab: (pieceId) => {
         this.hintPieceId = pieceId;
         this.refreshHints();
@@ -263,6 +271,9 @@ export class App {
         this.dirty = true;
       },
       onDrop: (result) => {
+        // Free-form never merges, so a merge count is the wrong thing to save on: every
+        // placement changes the board and none of them would ever have been written.
+        if (this.freeform) void this.save();
         if (result.merges > 0) {
           void this.save();
           // A merge can change which groups are named: mergeClusters() lets a name
@@ -402,6 +413,12 @@ export class App {
                 <option value="shapes">Shapes</option>
               </select>
             </label>
+            <label class="field" data-help="Match the picture: every piece has one home, as in a jigsaw. Any fit: any arrangement that fills the frame counts, so it becomes a packing puzzle with many solutions. Any fit needs shape pieces with flat edges, and turns those on for you.">Rules
+              <select class="rules">
+                <option value="match">Match the picture</option>
+                <option value="anyfit">Any fit</option>
+              </select>
+            </label>
             <label class="field poly-only" data-help="Roughly how many squares make up each shape piece. Larger means fewer, chunkier pieces.">Size
               <select class="poly-size">
                 <option value="2">Small</option>
@@ -518,6 +535,7 @@ export class App {
       hintFind: q<HTMLButtonElement>('.hint-find'),
       groupList: q<HTMLSelectElement>('.group-list'),
       cut: q<HTMLSelectElement>('.cut'),
+      rules: q<HTMLSelectElement>('.rules'),
       polySize: q<HTMLSelectElement>('.poly-size'),
       polyEdges: q<HTMLSelectElement>('.poly-edges'),
       pictureMode: q<HTMLSelectElement>('.picture-mode'),
@@ -623,7 +641,7 @@ export class App {
       if (Number.isFinite(id) && id >= 0) this.goToGroup(id);
     });
     this.els.pieces.addEventListener('change', () => void this.newPuzzle());
-    for (const control of [this.els.cut, this.els.polySize, this.els.polyEdges, this.els.pictureMode]) {
+    for (const control of [this.els.cut, this.els.rules, this.els.polySize, this.els.polyEdges, this.els.pictureMode]) {
       control.addEventListener('change', () => {
         this.updateCutUi();
         void this.newPuzzle();
@@ -853,6 +871,7 @@ export class App {
       thumbnail: makeThumbnail(shown, image.width, image.height),
       edit: isUneditedImage(edit) ? null : edit,
       picture: colours ? 'colours' : 'photo',
+      rules: this.els.rules.value === 'anyfit' ? 'anyfit' : 'match',
     };
 
     this.session = { record, state, image, original, imageMeta: meta, edit };
@@ -934,6 +953,7 @@ export class App {
     this.shown = shown;
     this.renderer.setImage(shown, image.width, image.height);
     this.els.pictureMode.value = record.picture === 'colours' ? 'colours' : 'photo';
+    this.els.rules.value = record.rules === 'anyfit' ? 'anyfit' : 'match';
     this.els.cut.value = state.geometry.cut === 'polyomino' ? 'shapes' : 'classic';
     this.updateCutUi();
     this.els.title.value = record.title;
@@ -1138,6 +1158,14 @@ export class App {
   }
 
   private refreshHints(): void {
+    // Hints name the neighbours a piece was *cut* beside. Under free-form rules that is
+    // not a hint, it is the original solution — and a wrong one, since any arrangement
+    // counts. The feature has no meaning here, so it stays quiet.
+    if (this.freeform) {
+      this.renderer.hintClusters = null;
+      this.els.hintFind.hidden = true;
+      return;
+    }
     if (!this.hintsOn || !this.session) {
       this.renderer.hintClusters = null;
       this.els.hintFind.hidden = true;
@@ -1318,12 +1346,77 @@ export class App {
     this.dirty = true;
   }
 
+  /**
+   * Is the puzzle finished?
+   *
+   * Two different questions. The ordinary rules ask whether every piece is joined into
+   * one assembly in its solved place. Free-form asks only whether the frame is full —
+   * and deliberately does not care where anything came from, which is the whole point.
+   */
+  private puzzleDone(state: PuzzleState): boolean {
+    return this.freeform ? isBoardFull(state) : isComplete(state);
+  }
+
+  /** True when the open puzzle is played by "any arrangement that fills the frame". */
+  private get freeform(): boolean {
+    return this.session?.record.rules === 'anyfit';
+  }
+
+  /**
+   * What releasing a piece means.
+   *
+   * Under the ordinary rules, the engine's own merge behaviour. Under free-form, a
+   * released piece falls into the nearest legal cell and nothing merges — so this
+   * reports zero merges, which is the truth and keeps the caller's bookkeeping correct.
+   */
+  private releaseFreeform(ids: readonly number[]): { clusterIds: number[]; merges: number } {
+    const state = this.session?.state;
+    if (!state) return { clusterIds: [...ids], merges: 0 };
+    if (!this.freeform) return releaseClusters(state, ids);
+
+    for (const id of ids) {
+      const snap = findBoardSnap(state, id);
+      if (snap) applyPlacement(state, id, snap);
+    }
+    return { clusterIds: ids.filter((id) => state.clusters.has(id)), merges: 0 };
+  }
+
+  /**
+   * Free-form needs the shape cut and flat edges, so choosing it sets them.
+   *
+   * A tab is complementary to one socket in one arrangement; put the piece elsewhere and
+   * the tabs collide. Rather than letting someone pick a combination that cannot work and
+   * then explaining the result, the combination is made impossible and the change said.
+   */
+  private enforceRules(): void {
+    if (this.els.rules.value !== 'anyfit') return;
+    const changed: string[] = [];
+    if (this.els.cut.value !== 'shapes') {
+      this.els.cut.value = 'shapes';
+      changed.push('shape pieces');
+    }
+    if (this.els.polyEdges.value !== 'flat') {
+      this.els.polyEdges.value = 'flat';
+      changed.push('flat edges');
+    }
+    if (changed.length > 0) {
+      this.setStatus(`Any fit needs ${changed.join(' and ')} — switched on.`);
+    }
+  }
+
   /** The shape-cut controls only mean anything for the shape cut. */
   private updateCutUi(): void {
+    this.enforceRules();
     const shapes = this.els.cut.value === 'shapes';
     for (const el of this.root.querySelectorAll<HTMLElement>('.poly-only')) {
       el.hidden = !shapes;
     }
+    // Hints are about where a piece was cut from, which free-form does not care about.
+    const anyfit = this.els.rules.value === 'anyfit';
+    this.els.hints.disabled = anyfit;
+    this.els.hints.title = anyfit
+      ? 'Hints do not apply under Any fit — there is no single right neighbour.'
+      : '';
   }
 
   /**
@@ -2375,8 +2468,8 @@ export class App {
 
     record.saved = serialize(state, GEOMETRY_OPTIONS, this.viewport);
     record.lastPlayed = Date.now();
-    record.progress = progress(state);
-    if (isComplete(state) && record.completedAt === null) {
+    record.progress = this.freeform ? coverage(state) : progress(state);
+    if (this.puzzleDone(state) && record.completedAt === null) {
       record.completedAt = Date.now();
       // Recorded once per finish, not once per save: `completedAt` is cleared by Shuffle
       // and by cutting a new puzzle, so replaying the same picture adds another entry
@@ -2467,7 +2560,7 @@ export class App {
 
   private updateStatus(): void {
     if (!this.session) return;
-    if (isComplete(this.session.state)) {
+    if (this.puzzleDone(this.session.state)) {
       const assists = this.activeAssists();
       this.setStatus(
         `Complete in ${formatDuration(this.session.state.elapsedMs)}` +
@@ -2476,7 +2569,9 @@ export class App {
       );
       return;
     }
-    const pct = Math.round(progress(this.session.state) * 100);
+    const pct = Math.round(
+      (this.freeform ? coverage(this.session.state) : progress(this.session.state)) * 100,
+    );
     if (this.selection.size > 0) {
       let pieces = 0;
       for (const id of this.selection) {

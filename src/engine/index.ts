@@ -13,6 +13,7 @@ export * from './puzzle.js';
 export * from './imageEdit.js';
 export * from './polyomino.js';
 export * from './pieceColouring.js';
+export * from './freeform.js';
 export * from './colour.js';
 export * from './colourSort.js';
 export * from './trays.js';

@@ -60,6 +60,15 @@ export interface PointerCallbacks {
    * grabbing a piece deliberately clears the selection to start a fresh single drag.
    */
   onGrab?(pieceId: number, clusterId: number): void;
+  /**
+   * Take over what a release means.
+   *
+   * Free-form solving does not merge pieces — two shapes side by side in your
+   * arrangement are not connected, and gluing them would fight a puzzle you are still
+   * experimenting with. Rather than teaching the input layer two rulebooks, the app
+   * supplies the rule and the input layer stays about pointers.
+   */
+  releaseRule?(clusterIds: readonly number[]): { clusterIds: number[]; merges: number };
   onDrop?(result: { clusterIds: number[]; merges: number }): void;
   onTrayChange?(): void;
   /** A tray header was tapped without dragging — the app opens its rename editor. */
@@ -399,7 +408,9 @@ export class PointerInput {
     // pieces snap as usual.
     removeFromTray(state, this.dragging);
 
-    const result = releaseClusters(state, this.dragging);
+    const result = this.cb.releaseRule
+      ? this.cb.releaseRule(this.dragging)
+      : releaseClusters(state, this.dragging);
     // Merges retire cluster ids, so a stale selection would point at nothing.
     if (this.cb.selection.size > 0) {
       const kept = [...this.cb.selection].filter((id) => state.clusters.has(id));

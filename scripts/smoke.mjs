@@ -1442,6 +1442,102 @@ const groupsAfterReload = await page.evaluate(() => {
 check('a group name survives a reload', groupsAfterReload.names.includes('The lighthouse'), groupsAfterReload.names.join(', ') || 'none');
 check('and the Groups list is rebuilt from it', groupsAfterReload.options.some((t) => t.includes('The lighthouse')));
 
+// 15. Free-form rules: any arrangement that fills the frame.
+const rulesSet = await page.evaluate(async () => {
+  const cutSel = document.querySelector('.cut');
+  const edges = document.querySelector('.poly-edges');
+  cutSel.value = 'classic';
+  edges.value = 'tabs';
+  document.querySelector('.pieces').value = '20';
+  document.querySelector('.picture-mode').value = 'colours';
+  const rules = document.querySelector('.rules');
+  rules.value = 'anyfit';
+  rules.dispatchEvent(new Event('change'));
+  await new Promise((r) => setTimeout(r, 1600));
+  return {
+    cut: cutSel.value,
+    edges: edges.value,
+    hintsDisabled: document.querySelector('[data-act="hints"]').disabled,
+    recorded: globalThis.__ojs.session.record.rules,
+    geometryCut: globalThis.__ojs.session.state.geometry.cut,
+  };
+});
+check('Any fit forces the shape cut', rulesSet.cut === 'shapes', rulesSet.cut);
+check('and flat edges, which tabs cannot provide', rulesSet.edges === 'flat', rulesSet.edges);
+check('the puzzle records the rules', rulesSet.recorded === 'anyfit', String(rulesSet.recorded));
+check('hints are switched off, having no meaning here', rulesSet.hintsDisabled === true);
+
+// Start from a known state: earlier sections leave modes and selections behind, and a
+// piece that is hidden by edges-only or part of a selection behaves differently.
+await page.evaluate(() => {
+  const app = globalThis.__ojs;
+  if (app.edgesOnly) app.toggleEdgesOnly();
+  app.selection.clear();
+  app.syncSelection();
+  if (app.tool !== 'move') app.toggleTool();
+});
+await page.click('[data-act="fit-board"]');
+await page.waitForTimeout(300);
+
+// Park a piece a few pixels off a cell corner and release it.
+//
+// This drives the app's release rule rather than synthesising a drag. The pointer path
+// itself is already covered twice over -- the classic snap test and the shape-cut drag
+// test both go through pointerdown/move/up -- and what is specific to free-form is the
+// *rule*: fall into the nearest legal cell, merge nothing. Driving the drag here as well
+// made the check sensitive to whatever mode and zoom earlier sections left behind,
+// without testing anything the other two do not.
+const ffDrop = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const before = app.session.record.progress;
+
+  const cluster = [...st.clusters.values()][0];
+  const piece = st.geometry.pieces[cluster.pieces[0]];
+  const originX = () => cluster.x + (piece.solved.x - cluster.pivotX);
+  const originY = () => cluster.y + (piece.solved.y - cluster.pivotY);
+  cluster.x += st.geometry.cellWidth * 2 + 9 - originX();
+  cluster.y += st.geometry.cellHeight * 2 - 7 - originY();
+
+  const result = app.releaseFreeform([cluster.id]);
+  await app.save();
+
+  const offCol = originX() / st.geometry.cellWidth;
+  const offRow = originY() / st.geometry.cellHeight;
+  return {
+    before,
+    after: app.session.record.progress,
+    merges: result.merges,
+    colError: Math.abs(offCol - Math.round(offCol)),
+    rowError: Math.abs(offRow - Math.round(offRow)),
+    clusters: st.clusters.size,
+    pieces: st.geometry.pieces.length,
+  };
+});
+check('a fresh free-form board starts empty', ffDrop.before < 0.01, `${(ffDrop.before * 100).toFixed(0)}%`);
+check('releasing a piece near the board snaps it onto a cell', ffDrop.colError < 0.001 && ffDrop.rowError < 0.001, `off by ${ffDrop.colError.toFixed(4)}, ${ffDrop.rowError.toFixed(4)} cells`);
+check('the release reports no merges, as free-form requires', ffDrop.merges === 0);
+check('and coverage goes up', ffDrop.after > ffDrop.before, `${(ffDrop.before * 100).toFixed(0)}% -> ${(ffDrop.after * 100).toFixed(0)}%`);
+check('pieces stay separate', ffDrop.clusters === ffDrop.pieces, `${ffDrop.clusters} clusters, ${ffDrop.pieces} pieces`);
+
+// Filling the frame finishes the puzzle, whatever arrangement got you there. The cut's
+// own arrangement is one valid answer, so it is the cheapest to drive here.
+const filled = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  for (const cl of st.clusters.values()) { cl.x = cl.pivotX; cl.y = cl.pivotY; cl.rotation = 0; }
+  await app.save();
+  app.updateStatus();
+  return {
+    progress: app.session.record.progress,
+    completedAt: app.session.record.completedAt,
+    clusters: st.clusters.size,
+    status: document.querySelector('.status').textContent,
+  };
+});
+check('a full frame reads as 100%', filled.progress > 0.999, `${(filled.progress * 100).toFixed(0)}%`);
+check('and the puzzle counts as finished without anything merging', filled.completedAt !== null && filled.clusters === ffDrop.pieces, filled.status);
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

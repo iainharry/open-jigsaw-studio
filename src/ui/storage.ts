@@ -53,6 +53,12 @@ export interface PuzzleRecord {
   progress: number;
   /** Small data-URL preview, so the library lists without decoding every full image. */
   thumbnail: string | null;
+  /**
+   * How this puzzle is solved. 'match' is the ordinary jigsaw, where every piece has one
+   * home. 'anyfit' accepts any arrangement that fills the frame. Absent means 'match',
+   * so every puzzle made before free-form existed still reads correctly.
+   */
+  rules?: 'match' | 'anyfit';
   /** Whether this puzzle is cut from the photograph or played in colours only. */
   picture?: 'photo' | 'colours';
   /** Free text the player keeps with the puzzle. */
