@@ -56,7 +56,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 166 headless engine tests, ~2 s |
+| `npm test` | 177 headless engine tests, ~2 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -147,6 +147,17 @@ at 45% is a different afternoon from 500 pieces unaided — so the app writes do
 actually cost you. The card shows your best time. Shuffling a finished puzzle makes it
 unfinished again, so playing it a second time adds a second entry.
 
+## Naming a group
+
+Select a group of joined pieces and press **Name group**. Type a name — "the lighthouse",
+"top left sky" — and it appears on the board above that group and in the **Groups** list
+in the toolbar. Choosing it from the list selects the group and brings it into view,
+however far away it has drifted.
+
+The name is drawn at a fixed size on screen, so it stays readable when you zoom out to
+find your way around a large board. Names are saved with the puzzle, and if you join a
+named group to an unnamed one the name carries across.
+
 ## Shape puzzles
 
 **Cut** switches between classic jigsaw pieces and **Shapes** — L's, T's, crosses, S's,
@@ -163,6 +174,10 @@ all: every piece gets its own colour and you match by shape and colour together.
 worth knowing about — with plain identical pieces, two matching shapes swapped would fit
 perfectly and leave you with a board that looks finished but does not register as
 complete. A colour each makes that impossible.
+
+The colours are chosen so that no two *touching* pieces are hard to tell apart, including
+for red-green and blue-yellow colour blindness — the palette varies brightness as well as
+hue, so it also reads in greyscale. This is checked by the tests rather than assumed.
 
 ## Settings
 
@@ -284,10 +299,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
 edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
 preparation, assistance levels, notes/difficulty/history, appearance, autosave and sharing — which
-completes the original brief — and a second cut that makes shape pieces. Deliberately deferred: tags and search, which solve a problem
+completes the original brief — a second cut that makes shape pieces, and named groups. Deliberately deferred: tags and search, which solve a problem
 a five-puzzle library does not have, and a TV/remote-control interface, which is a
 different input model rather than a layout change.
-`ARCHITECTURE.md` §22 lists what is deliberately not built.
+`ARCHITECTURE.md` §23 lists what is deliberately not built.
 
 ## Licence
 

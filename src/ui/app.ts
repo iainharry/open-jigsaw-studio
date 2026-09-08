@@ -20,6 +20,7 @@ import {
   type ImageEdit,
   groupByColour,
   liveMembers,
+  nameCluster,
   neighbourClusters,
   oklabToRgb,
   type ColourGroup,
@@ -179,6 +180,7 @@ export class App {
     ghost: HTMLInputElement;
     hints: HTMLButtonElement;
     hintFind: HTMLButtonElement;
+    groupList: HTMLSelectElement;
     cut: HTMLSelectElement;
     polySize: HTMLSelectElement;
     polyEdges: HTMLSelectElement;
@@ -261,7 +263,12 @@ export class App {
         this.dirty = true;
       },
       onDrop: (result) => {
-        if (result.merges > 0) void this.save();
+        if (result.merges > 0) {
+          void this.save();
+          // A merge can change which groups are named: mergeClusters() lets a name
+          // survive absorbing an unnamed group, and two named groups joining leaves one.
+          this.refreshGroupList();
+        }
         this.updateStatus();
       },
       onTrayChange: () => {
@@ -416,7 +423,11 @@ export class App {
               </select>
             </label>
           </span>
-          <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
+          <button class="btn" data-act="name-group" data-help="Give the selected group of joined pieces a name, so you can find it again. The name shows on the board and in the Groups list.">Name group</button>
+            <label class="field" data-help="Jump to a named group of joined pieces. Choosing one selects it and brings it into view.">Groups
+              <select class="group-list"></select>
+            </label>
+            <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           <span class="spacer"></span>
           <span class="status"></span>
@@ -505,6 +516,7 @@ export class App {
       ghost: q<HTMLInputElement>('.ghost'),
       hints: q<HTMLButtonElement>('[data-act="hints"]'),
       hintFind: q<HTMLButtonElement>('.hint-find'),
+      groupList: q<HTMLSelectElement>('.group-list'),
       cut: q<HTMLSelectElement>('.cut'),
       polySize: q<HTMLSelectElement>('.poly-size'),
       polyEdges: q<HTMLSelectElement>('.poly-edges'),
@@ -542,6 +554,7 @@ export class App {
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
+      else if (act === 'name-group') this.nameSelectedGroup();
       else if (act === 'settings') this.els.settings.hidden = false;
       else if (act === 'close-settings') this.els.settings.hidden = true;
       else if (act === 'backup-folder') void this.chooseBackupFolder();
@@ -605,6 +618,10 @@ export class App {
       this.els.file.value = '';
     });
 
+    this.els.groupList.addEventListener('change', () => {
+      const id = Number(this.els.groupList.value);
+      if (Number.isFinite(id) && id >= 0) this.goToGroup(id);
+    });
     this.els.pieces.addEventListener('change', () => void this.newPuzzle());
     for (const control of [this.els.cut, this.els.polySize, this.els.polyEdges, this.els.pictureMode]) {
       control.addEventListener('change', () => {
@@ -849,6 +866,7 @@ export class App {
     this.reapplyAssistance();
     this.updateRotationUi();
     this.refreshTrayUi();
+    this.refreshGroupList();
     this.drawReference();
     this.fitBoard();
     this.playingSince = performance.now();
@@ -929,6 +947,7 @@ export class App {
     this.reapplyAssistance();
     this.updateRotationUi();
     this.refreshTrayUi();
+    this.refreshGroupList();
     // Records written before thumbnails existed get one now, so the library is not
     // permanently full of blank cards for older puzzles.
     if (!record.thumbnail) {
@@ -1305,6 +1324,106 @@ export class App {
     for (const el of this.root.querySelectorAll<HTMLElement>('.poly-only')) {
       el.hidden = !shapes;
     }
+  }
+
+  /**
+   * Name the selected group of joined pieces.
+   *
+   * This was in the plan from M1 — `nameCluster()` has existed and round-tripped through
+   * save files since then, and nothing ever called it. Trays covered the loose half of
+   * the idea; this is the connected half: an assembled section you want to recognise and
+   * come back to.
+   *
+   * A single loose piece can be named too. Refusing would be a rule with no purpose:
+   * naming the one odd piece you keep losing is a perfectly good use of it.
+   */
+  private nameSelectedGroup(): void {
+    if (!this.session) return;
+    if (this.selection.size !== 1) {
+      this.setStatus(
+        this.selection.size === 0
+          ? 'Select a group first — Shift+click a piece, or use Select mode.'
+          : `Name one group at a time — ${this.selection.size} are selected.`,
+      );
+      return;
+    }
+    const clusterId = [...this.selection][0]!;
+    const cluster = this.session.state.clusters.get(clusterId);
+    if (!cluster) return;
+
+    const bounds = clusterWorldBounds(this.session.state, clusterId);
+    if (!bounds) return;
+    const canvasBox = this.canvas.getBoundingClientRect();
+    const stageBox = this.els.stage.getBoundingClientRect();
+    const tl = worldToScreen(this.viewport, this.renderer.size, { x: bounds.minX, y: bounds.minY });
+
+    // The tray rename field is reused rather than duplicated: it is the same interaction
+    // — type over the thing you are naming — and one of them is enough to keep working.
+    const input = this.els.trayRename;
+    input.value = cluster.name ?? '';
+    input.dataset['trayId'] = '';
+    input.dataset['clusterId'] = String(clusterId);
+    input.hidden = false;
+    input.style.left = `${canvasBox.left - stageBox.left + tl.x}px`;
+    input.style.top = `${canvasBox.top - stageBox.top + tl.y - 26}px`;
+    input.style.width = `${Math.max(120, Math.min(260, (bounds.maxX - bounds.minX) * this.viewport.zoom))}px`;
+    input.style.height = '24px';
+    input.focus();
+    input.select();
+  }
+
+  private commitGroupName(clusterId: number, name: string): void {
+    if (!this.session) return;
+    const trimmed = name.trim();
+    nameCluster(this.session.state, clusterId, trimmed === '' ? null : trimmed);
+    this.refreshGroupList();
+    this.dirty = true;
+    void this.save();
+    this.setStatus(trimmed === '' ? 'Group name cleared.' : `Named “${trimmed}”.`);
+  }
+
+  /** Named groups, for the jump list. Rebuilt on demand rather than tracked. */
+  private refreshGroupList(): void {
+    const select = this.els.groupList;
+    const named = this.session
+      ? [...this.session.state.clusters.values()].filter((c) => c.name)
+      : [];
+    select.innerHTML = '';
+    const head = document.createElement('option');
+    head.value = '-1';
+    head.textContent = named.length === 0 ? 'No named groups' : `Groups (${named.length})`;
+    select.append(head);
+    for (const cluster of named) {
+      const opt = document.createElement('option');
+      opt.value = String(cluster.id);
+      opt.textContent = `${cluster.name} · ${cluster.pieces.length}`;
+      select.append(opt);
+    }
+    select.value = '-1';
+    select.disabled = named.length === 0;
+  }
+
+  /** Select a named group and bring it into view. */
+  private goToGroup(clusterId: number): void {
+    if (!this.session || !this.session.state.clusters.has(clusterId)) return;
+    const bounds = clusterWorldBounds(this.session.state, clusterId);
+    if (!bounds) return;
+    this.selection.clear();
+    this.selection.add(clusterId);
+    this.syncSelection();
+    this.viewport = fitTo(
+      this.renderer.size,
+      {
+        x: bounds.minX,
+        y: bounds.minY,
+        w: Math.max(1, bounds.maxX - bounds.minX),
+        h: Math.max(1, bounds.maxY - bounds.minY),
+      },
+      0.6,
+    );
+    this.dirty = true;
+    this.updateStatus();
+    this.els.groupList.value = '-1';
   }
 
   /** Which aids were switched on, for recording beside a finishing time. */
@@ -1778,6 +1897,7 @@ export class App {
     const input = this.els.trayRename;
     input.value = tray.name;
     input.dataset['trayId'] = String(trayId);
+    input.dataset['clusterId'] = '';
     input.hidden = false;
     input.style.left = `${canvasBox.left - stageBox.left + tl.x + 2}px`;
     input.style.top = `${canvasBox.top - stageBox.top + tl.y + 2}px`;
@@ -1787,13 +1907,28 @@ export class App {
     input.select();
   }
 
+  /**
+   * Commit whatever the inline field was renaming.
+   *
+   * One field serves both trays and named groups, so it has to say which it was opened
+   * for. The alternative was a second identical input with a second set of listeners to
+   * keep in step.
+   */
   private commitTrayRename(save: boolean): void {
     const input = this.els.trayRename;
     if (input.hidden) return;
-    const trayId = Number(input.dataset['trayId']);
+    const clusterId = input.dataset['clusterId'];
+    const trayId = input.dataset['trayId'];
     input.hidden = true;
+    input.dataset['clusterId'] = '';
     if (!save || !this.session) return;
-    renameTray(this.session.state, trayId, input.value);
+
+    if (clusterId) {
+      this.commitGroupName(Number(clusterId), input.value);
+      return;
+    }
+    if (!trayId) return;
+    renameTray(this.session.state, Number(trayId), input.value);
     this.refreshTrayUi();
     this.dirty = true;
     void this.save();

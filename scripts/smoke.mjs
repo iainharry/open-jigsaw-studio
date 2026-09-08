@@ -1353,6 +1353,95 @@ check('the shape cut survives a reload', reloaded.cut === 'polyomino' && reloade
 check('colours-only survives a reload', reloaded.picture === 'colours');
 check('and the controls come back matching the puzzle', reloaded.cutControl === 'shapes' && reloaded.modeControl === 'colours', `${reloaded.cutControl}/${reloaded.modeControl}`);
 
+// 14. Named groups -- the M1 hook that nothing called until now.
+await page.evaluate(() => {
+  const cut = document.querySelector('.cut');
+  cut.value = 'classic';
+  document.querySelector('.picture-mode').value = 'photo';
+  document.querySelector('.pieces').value = '20';
+  cut.dispatchEvent(new Event('change'));
+});
+await page.waitForFunction(() => globalThis.__ojs.session.state.geometry.pieces.length <= 30, null, { timeout: 30_000 });
+await page.waitForTimeout(400);
+
+const groupNamed = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const target = [...st.clusters.keys()][0];
+  app.selection.clear();
+  app.selection.add(target);
+  app.syncSelection();
+
+  document.querySelector('[data-act="name-group"]').click();
+  const input = document.querySelector('.tray-rename');
+  const offered = !input.hidden;
+  input.value = 'The lighthouse';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await new Promise((r) => setTimeout(r, 250));
+
+  const list = document.querySelector('.group-list');
+  return {
+    offered,
+    stored: st.clusters.get(target)?.name ?? null,
+    options: [...list.options].map((o) => o.textContent),
+    enabled: !list.disabled,
+    target,
+  };
+});
+check('naming offers an inline field on the group', groupNamed.offered === true);
+check('the name reaches the cluster', groupNamed.stored === 'The lighthouse', String(groupNamed.stored));
+check('and appears in the Groups list', groupNamed.options.some((t) => t.includes('The lighthouse')), groupNamed.options.join(' | '));
+check('the Groups list becomes usable once something is named', groupNamed.enabled === true);
+
+const jumped = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  app.selection.clear();
+  app.syncSelection();
+  document.querySelector('[data-act="fit-all"]').click();
+  await new Promise((r) => requestAnimationFrame(r));
+  const before = app.viewport.zoom;
+  const list = document.querySelector('.group-list');
+  list.value = String([...list.options].find((o) => o.textContent.includes('The lighthouse')).value);
+  list.dispatchEvent(new Event('change'));
+  await new Promise((r) => requestAnimationFrame(r));
+  return { before, after: app.viewport.zoom, selected: app.selection.size };
+});
+check('choosing a group selects it', jumped.selected === 1, `${jumped.selected} selected`);
+check('and brings it into view', jumped.after > jumped.before, `zoom ${jumped.before.toFixed(2)} -> ${jumped.after.toFixed(2)}`);
+
+const labelled = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // Measured only after the jump has brought the group on screen: a label for an
+  // off-screen group is skipped on purpose, so measuring first tested nothing.
+  const board = document.querySelector('.board');
+  const ctx = board.getContext('2d');
+  const { data } = ctx.getImageData(0, 0, board.width, board.height);
+  let bright = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] > 220 && data[i + 1] > 225 && data[i + 2] > 230) bright++;
+  }
+  return bright;
+});
+check('the name is painted on the board', labelled > 20, `${labelled} label pixels`);
+
+
+// Names have round-tripped through the save format since M1; nothing had ever proved it.
+await page.evaluate(() => globalThis.__ojs.save());
+await page.reload();
+await page.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await page.waitForTimeout(600);
+const groupsAfterReload = await page.evaluate(() => {
+  const st = globalThis.__ojs.session.state;
+  return {
+    names: [...st.clusters.values()].map((c) => c.name).filter(Boolean),
+    options: [...document.querySelector('.group-list').options].map((o) => o.textContent),
+  };
+});
+check('a group name survives a reload', groupsAfterReload.names.includes('The lighthouse'), groupsAfterReload.names.join(', ') || 'none');
+check('and the Groups list is rebuilt from it', groupsAfterReload.options.some((t) => t.includes('The lighthouse')));
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

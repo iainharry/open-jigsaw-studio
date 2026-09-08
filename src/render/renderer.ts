@@ -8,7 +8,7 @@
  */
 
 import { pieceWorldBounds, toSolved } from '../engine/clusters.js';
-import { clusterOf, type PuzzleState } from '../engine/puzzle.js';
+import { clusterOf, clusterWorldBounds, type PuzzleState } from '../engine/puzzle.js';
 import {
   isHidden,
   isOnHeader,
@@ -87,6 +87,8 @@ export class Renderer {
   onlyPieces: ReadonlySet<number> | null = null;
   /** Kept so the ghost can be painted; the bake cache owns it for rasterising. */
   private source: CanvasImageSource | null = null;
+  /** Draw the name of any cluster that has one. */
+  showGroupNames = true;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -284,6 +286,7 @@ export class Renderer {
       ctx.restore();
     }
 
+    this.drawGroupNames(state, vp, size);
     this.drawHintPointers(state, vp, size);
 
     if (this.band) {
@@ -335,6 +338,51 @@ export class Renderer {
    * not a hint. The arrow says which way to go and how far, and turns a hunt across the
    * whole board into a direction.
    */
+  /**
+   * Label every named cluster on the board.
+   *
+   * Drawn in screen space after the pieces, so a label stays the same size however far
+   * you zoom out — a name you can only read at 100% would not do the job the feature
+   * exists for, which is finding the section again across a large board.
+   */
+  private drawGroupNames(state: PuzzleState, vp: Viewport, size: ScreenSize): void {
+    if (!this.showGroupNames) return;
+    const { ctx } = this;
+
+    for (const cluster of state.clusters.values()) {
+      if (!cluster.name || isHidden(state, cluster.id)) continue;
+      const bounds = clusterWorldBounds(state, cluster.id);
+      if (!bounds) continue;
+
+      const mid = worldToScreen(vp, size, {
+        x: (bounds.minX + bounds.maxX) / 2,
+        y: bounds.minY,
+      });
+      if (mid.x < -200 || mid.x > size.width + 200 || mid.y < -60 || mid.y > size.height + 60) {
+        continue;
+      }
+
+      ctx.save();
+      ctx.font = '600 13px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const padding = 7;
+      const width = ctx.measureText(cluster.name).width + padding * 2;
+      const y = mid.y - 14;
+      ctx.fillStyle = 'rgba(8,10,14,0.82)';
+      ctx.strokeStyle = this.selection.has(cluster.id) ? this.selectionColour : 'rgba(255,255,255,0.28)';
+      ctx.lineWidth = 1;
+      const x = mid.x - width / 2;
+      ctx.beginPath();
+      ctx.roundRect(x, y - 11, width, 22, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#e6e9ee';
+      ctx.fillText(cluster.name, mid.x, y);
+      ctx.restore();
+    }
+  }
+
   private drawHintPointers(state: PuzzleState, vp: Viewport, size: ScreenSize): void {
     if (!this.hintClusters || this.hintClusters.size === 0) return;
     const { ctx } = this;

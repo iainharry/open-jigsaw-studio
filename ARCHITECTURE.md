@@ -1,8 +1,8 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M10 (engine, selection, rotation, library, trays,
+Status of this document: covers M1 to M11 (engine, selection, rotation, library, trays,
 colour sorting, shipping, image preparation, assistance levels, notes and history,
-appearance/autosave/sharing, and the polyomino cut).
+appearance/autosave/sharing, the polyomino cut, accessible colours and named groups).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -20,7 +20,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 166 current tests run headless in about 2 seconds. If engine code ever needs jsdom, the
+All 177 current tests run headless in about 2 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -754,7 +754,66 @@ wrong. With a colour each, the swap is visible.
 The colour board is regenerated on open, never stored — like the prepared image, and for
 the same reason.
 
-## 22. Known limitations after M2
+## 22. Colour without relying on colour, and named groups
+
+### The colours-only palette was unusable for one man in twelve
+
+The first version spaced hues by the golden angle and keyed the colour to piece id.
+Measured under simulated red-green colour vision deficiency, pieces one id apart came out
+**6.6 apart** on a 0-441 scale — the same colour. In a mode whose entire mechanic is
+telling pieces apart by colour, that is not a rough edge; it is the feature not working
+for about 8% of men.
+
+Two separate mistakes, and the second is the one worth remembering.
+
+**Hue was carrying all the information.** Under deuteranopia the hue circle collapses
+towards a single blue-yellow axis, so "far apart in hue" guarantees nothing. Lightness
+survives every form of colour blindness, so the palette now steps through four widely
+separated lightness levels — a set chosen by search, not taste — and hue is decoration.
+Three levels scored 12.4, because ids three apart then share a level *and* sit 52 degrees
+apart in hue; four levels put the repeat at 190 degrees.
+
+**Colour was keyed to id, but adjacency is not.** Ids run in reading order, so two pieces
+touching vertically can be eight or more apart, and at that distance even the repaired
+palette collapses to 3.0. No palette tuning fixes that, because a palette does not know
+which pieces touch. Colours are now assigned by a greedy pass over the *adjacency graph*,
+each piece taking whichever entry is furthest from the ones its neighbours already hold.
+
+Measured on the same tiling: worst touching pair **8.1 by id, 112.5 by adjacency**. The
+test suite asserts the guarantee directly — no two touching pieces closer than 40 to any
+of four vision types, across several seeds and sizes, for both cuts — and includes a guard
+that a by-id palette *fails* that assertion, so nobody can simplify it back.
+
+`perceptualDistance()` takes the **minimum** across the vision simulations rather than the
+average, deliberately: a pair that is vivid to most people and identical to a deuteranope
+is not a usable pair, and an average would bury that under three good scores.
+
+A side effect worth having: because lightness now does the work, the board is legible in
+greyscale too.
+
+### Named groups, five milestones late
+
+Section 2 records that clusters were made first-class in M1 *specifically* so named groups
+would be cheap later. `nameCluster()` has existed since then, round-tripped through save
+files since then, and was never called by anything. Trays covered the loose-pieces half of
+the original idea; the connected half — naming an assembled section and finding it again —
+sat unbuilt while nine other milestones shipped.
+
+It cost a button, a jump list and a label, exactly as M1 predicted. Three details:
+
+- The label is drawn in **screen space**, so it stays readable however far you zoom out. A
+  name you can only read at 100% would not do the job the feature exists for.
+- A label for an off-screen group is skipped. The smoke test originally measured for label
+  pixels *before* jumping to the group and found none — correctly, and it was the test
+  that was wrong.
+- `mergeClusters()` already handled name inheritance from M1 ("a named group survives
+  absorbing an unnamed one"), so joining sections behaves sensibly without new code. The
+  group list is rebuilt after any merge, since a merge can change which names exist.
+
+The inline rename field is shared with trays rather than duplicated: it is the same
+interaction, and one of them is enough to keep working.
+
+## 23. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

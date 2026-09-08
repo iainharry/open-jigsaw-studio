@@ -13,30 +13,9 @@
  * piece it points at.
  */
 
-import { oklabToRgb } from '../engine/colour.js';
+import { assignPieceColours } from '../engine/pieceColouring.js';
 import type { PuzzleGeometry } from '../engine/index.js';
 import { outlineToPath2D } from './bakeCache.js';
-
-/**
- * A colour per piece, spaced around the hue circle by the golden angle.
- *
- * The golden angle is used because consecutive indices land far apart on the circle, and
- * piece ids of neighbouring pieces are usually close together — so neighbours come out
- * strongly contrasting without needing to solve a graph-colouring problem. Lightness and
- * chroma cycle on different periods so two pieces a long way apart in id do not collide
- * either.
- */
-export function pieceColour(index: number): string {
-  const hue = (index * 137.508 * Math.PI) / 180;
-  const lightness = 0.62 + 0.16 * Math.sin(index * 1.1);
-  const chroma = 0.11 + 0.035 * Math.cos(index * 0.7);
-  const [r, g, b] = oklabToRgb([
-    lightness,
-    chroma * Math.cos(hue),
-    chroma * Math.sin(hue),
-  ]);
-  return `rgb(${r} ${g} ${b})`;
-}
 
 /**
  * Paint every piece in its own colour, in its solved position.
@@ -60,11 +39,17 @@ export function makeColourBoard(
   ctx.fillStyle = '#0e1013';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  // Assigned over the adjacency graph, not by piece id: ids run in reading order, so
+  // two pieces touching vertically can be eight apart, which is exactly where a
+  // by-id palette collapsed to indistinguishable under colour blindness.
+  const colours = assignPieceColours(geometry);
+
   for (const piece of geometry.pieces) {
     const path = outlineToPath2D(piece.outline, 1);
+    const [r, g, b] = colours[piece.id]!;
     ctx.save();
     ctx.translate(piece.bounds.x, piece.bounds.y);
-    ctx.fillStyle = pieceColour(piece.id);
+    ctx.fillStyle = `rgb(${r} ${g} ${b})`;
     ctx.fill(path);
     // Half a pixel of stroke in the same colour closes the antialiasing gap between
     // adjacent fills without changing the shape.
