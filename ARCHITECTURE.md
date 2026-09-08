@@ -545,9 +545,27 @@ called `updateStatus()`, which knew nothing about hints and replaced the line wi
 ongoing evidence it is on is a mode people correctly assume is off, so the hint state is
 now reported on every selection rather than announced once.
 
-The lesson generalises twice over: an assertion that a thing is *marked* is not an
-assertion that it can be *seen*, and a mode needs continuous feedback, not an
-announcement. For anything visual, look at a frame.
+A third report closed the loop: "no Find button appears". That message was the
+*no-selection* branch, which proved the build was current and that clicking a piece was
+selecting nothing. It was not: `onDown` in `pointer.ts` deliberately **clears** the
+selection when you grab a piece that is not already selected, so it can start a fresh
+single-piece drag. Selection only happens on Shift+click or a lasso in Select mode. So
+hints keyed off the selection could not fire from an ordinary click — which is every
+normal interaction — while the status line cheerfully advised "select a piece", exactly
+what the user had just done.
+
+Hints now follow **the piece you last picked up**, falling back to the selection when
+there is one. That is also the better model: you pick up a piece, and the pieces that go
+beside it light up. The source is stored as a *piece* id, not a cluster id, because a
+cluster id dies the moment that cluster merges into another, and the point is to keep
+showing what still goes beside the piece you just placed.
+
+The lesson generalises three ways: an assertion that a thing is *marked* is not an
+assertion that it can be *seen*; a mode needs continuous feedback, not an announcement;
+and a feature whose trigger is a gesture most people never make is not shipped. All three
+were invisible to a test suite driving the app through its own methods rather than through
+the gestures a person actually uses — the smoke test now performs a real pointerdown and
+pointerup on a piece, with no Shift and no Select mode, which is what was broken.
 
 ### The smoke test was flaky, which is worse than absent
 

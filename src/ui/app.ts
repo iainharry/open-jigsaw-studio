@@ -181,6 +181,12 @@ export class App {
   private hintsOn = false;
   /** Assistance: hide every piece that is not part of the border. */
   private edgesOnly = false;
+  /**
+   * The piece hints are about. Held as a *piece* id rather than a cluster id because a
+   * cluster id dies when the cluster merges into another, and the whole point is to keep
+   * showing you what still goes beside the piece you just placed.
+   */
+  private hintPieceId: number | null = null;
   private tool: Tool = 'move';
   private refMode: RefMode = 'off';
   private refSize = 300;
@@ -203,6 +209,12 @@ export class App {
       },
       onSelectionChange: () => {
         this.syncSelection();
+        this.updateStatus();
+        this.dirty = true;
+      },
+      onGrab: (pieceId) => {
+        this.hintPieceId = pieceId;
+        this.refreshHints();
         this.updateStatus();
         this.dirty = true;
       },
@@ -329,7 +341,7 @@ export class App {
             <label class="field" data-help="Show the finished picture faintly on the board, to lay pieces over. Drag left for no help at all; drag right to make it clearer.">Ghost
               <input type="range" class="ghost" min="0" max="45" step="1" value="0" />
             </label>
-            <button class="btn" data-act="hints" data-help="Outline the pieces that belong beside whatever you have selected. It shows you where to look; it does not place anything for you.">Hints</button>
+            <button class="btn" data-act="hints" data-help="Outline the pieces that belong beside the piece you last touched, or beside your whole selection. It shows you where to look; it does not place anything for you.">Hints</button>
             <button class="btn hint-find" data-act="hint-find" hidden data-help="Move the view so the selected piece and its outlined neighbours are all on screen at once. Nothing is moved on the board — only the view.">Find</button>
             <button class="btn" data-act="edges-only" data-help="Hide every piece that is not part of the border, so you can build the frame without the rest in the way. Nothing is lost — switch it off to bring them back.">Edges only</button>
           </span>
@@ -933,6 +945,8 @@ export class App {
    * them — having to turn hints back on for every puzzle would be its own annoyance.
    */
   private reapplyAssistance(): void {
+    // Piece ids belong to one puzzle's geometry.
+    this.hintPieceId = null;
     this.renderer.onlyPieces =
       this.edgesOnly && this.session ? borderPieceIds(this.session.state) : null;
     this.els.edgesOnly.classList.toggle('on', this.edgesOnly);
@@ -946,8 +960,20 @@ export class App {
       this.els.hintFind.hidden = true;
       return;
     }
+    // The selection if there is one, otherwise the last piece picked up. Keying hints
+    // solely off the selection made them unreachable in normal play: clicking a piece
+    // starts a drag and *clears* the selection, so an ordinary click -- exactly what
+    // "select a piece" invites -- could never produce a hint.
+    const sources: number[] = [];
+    if (this.selection.size > 0) {
+      sources.push(...this.selection);
+    } else if (this.hintPieceId !== null) {
+      const clusterId = this.session.state.clusterOfPiece[this.hintPieceId];
+      if (clusterId !== undefined) sources.push(clusterId);
+    }
+
     const ids = new Set<number>();
-    for (const clusterId of this.selection) {
+    for (const clusterId of sources) {
       for (const id of neighbourClusters(this.session.state, clusterId)) ids.add(id);
     }
     this.renderer.hintClusters = ids;
@@ -1005,7 +1031,7 @@ export class App {
     this.dirty = true;
     if (!this.hintsOn) this.setStatus('Hints off.');
     else if (this.selection.size === 0) {
-      this.setStatus('Hints on — select a piece and its neighbours will be outlined.');
+      this.setStatus('Hints on — touch a piece and its neighbours will be outlined.');
     } else {
       this.setStatus(`Hints on — ${this.renderer.hintClusters?.size ?? 0} neighbours outlined.`);
     }
@@ -1916,7 +1942,12 @@ export class App {
           `${this.hintNote()} · ${pct}% connected`,
       );
     } else if (this.hintsOn) {
-      this.setStatus(`${pct}% connected · Hints on — select a piece to see its neighbours.`);
+      const n = this.renderer.hintClusters?.size ?? 0;
+      this.setStatus(
+        n > 0
+          ? `${pct}% connected${this.hintNote()}`
+          : `${pct}% connected · Hints on — touch a piece to see its neighbours.`,
+      );
     } else {
       this.setStatus(`${pct}% connected`);
     }

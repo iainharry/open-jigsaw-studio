@@ -936,6 +936,53 @@ const hintStatus = await page.evaluate(() => {
 check('selecting with hints on says so', /neighbour/i.test(hintStatus.withHints), hintStatus.withHints);
 check('and says something different with hints off', !/neighbour/i.test(hintStatus.withoutHints), hintStatus.withoutHints);
 
+// The reported failure, reproduced: an ordinary click on a piece in Move mode, with no
+// Shift and no Select mode. That path clears the selection to start a drag, so hints
+// keyed off the selection could never fire -- which is every normal interaction.
+const plainClick = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  app.selection.clear();
+  app.syncSelection();
+  if (!app.hintsOn) app.toggleHints();
+  document.querySelector('[data-act="fit-all"]').click();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const c = document.querySelector('.board');
+  const r = c.getBoundingClientRect();
+  const vp = app.viewport;
+  const single = [...st.clusters.values()].find((k) => k.pieces.length === 1);
+  const piece = st.geometry.pieces[single.pieces[0]];
+  const world = {
+    x: single.x + (piece.solved.x - single.pivotX) + piece.bounds.w / 2,
+    y: single.y + (piece.solved.y - single.pivotY) + piece.bounds.h / 2,
+  };
+  const zi = st.zOrder.indexOf(single.id);
+  if (zi >= 0) { st.zOrder.splice(zi, 1); st.zOrder.push(single.id); }
+  const sx = (world.x - vp.x) * vp.zoom + r.width / 2 + r.left;
+  const sy = (world.y - vp.y) * vp.zoom + r.height / 2 + r.top;
+
+  // A press and release with no movement: a click, not a drag.
+  fireEv(c, 'pointerdown', sx, sy);
+  await new Promise((z) => requestAnimationFrame(z));
+  fireEv(c, 'pointerup', sx, sy);
+  await new Promise((z) => requestAnimationFrame(z));
+
+  const expected = [piece.neighbours.top, piece.neighbours.right, piece.neighbours.bottom, piece.neighbours.left].filter((n) => n >= 0).length;
+  return {
+    selectionSize: app.selection.size,
+    hinted: app.renderer.hintClusters?.size ?? 0,
+    expected,
+    findShown: !document.querySelector('[data-act="hint-find"]').hidden,
+    status: document.querySelector('.status').textContent,
+  };
+}, fire);
+check('a plain click still selects nothing, as designed', plainClick.selectionSize === 0);
+check('but it now produces hints anyway', plainClick.hinted === plainClick.expected && plainClick.hinted > 0, `${plainClick.hinted} hinted, ${plainClick.expected} neighbours`);
+check('and Find appears for it', plainClick.findShown === true);
+check('and the status line says so', /neighbour/i.test(plainClick.status), plainClick.status);
+
 const edgesOnly = await page.evaluate(async () => {
   const app = globalThis.__ojs;
   const total = app.session.state.geometry.pieces.length;

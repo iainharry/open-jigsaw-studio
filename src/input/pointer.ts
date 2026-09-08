@@ -54,6 +54,12 @@ export interface PointerCallbacks {
   selection: Set<number>;
   onChange(): void;
   onSelectionChange?(): void;
+  /**
+   * A piece was picked up. Fired for the piece under the pointer whenever a press lands
+   * on one, which is the natural "the piece in my hand" signal -- selection is not, since
+   * grabbing a piece deliberately clears the selection to start a fresh single drag.
+   */
+  onGrab?(pieceId: number, clusterId: number): void;
   onDrop?(result: { clusterIds: number[]; merges: number }): void;
   onTrayChange?(): void;
   /** A tray header was tapped without dragging — the app opens its rename editor. */
@@ -228,6 +234,9 @@ export class PointerInput {
       this.mode = 'drag';
       this.renderer.highlightClusters = new Set(this.dragging);
       this.lastWorld = world;
+      // After the selection bookkeeping above, so anything keyed off the grabbed piece
+      // is not immediately overwritten by the selection having been cleared.
+      this.cb.onGrab?.(hit.pieceId, hit.clusterId);
     } else if (bandGesture) {
       this.mode = 'band';
       this.bandStart = world;
