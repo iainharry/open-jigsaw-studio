@@ -26,7 +26,21 @@
 
 import { clusterWorldBounds, type PuzzleState } from './puzzle.js';
 import { translate } from './clusters.js';
-import type { Cell } from './polyomino.js';
+import { silhouetteMask, type Cell, type Silhouette } from './polyomino.js';
+
+/**
+ * Which cells are part of the puzzle.
+ *
+ * A silhouette makes most of the bounding rectangle not part of the board at all, and
+ * free-form has to know: a piece must not be placeable in the empty corner outside a
+ * diamond, and coverage must be measured against the outline rather than the rectangle,
+ * or a diamond puzzle could never read as finished.
+ */
+export function boardMask(state: PuzzleState): Uint8Array {
+  const { rows, cols } = state.geometry;
+  const shape = (state.geometry.polyominoOptions?.['silhouette'] ?? 'rectangle') as Silhouette;
+  return silhouetteMask(rows, cols, shape);
+}
 
 export interface Placement {
   readonly row: number;
@@ -129,8 +143,10 @@ export function isLegal(
   if (!piece) return false;
 
   const occupied = grid ?? occupancy(state, clusterId);
+  const mask = boardMask(state);
   for (const cell of cellsAt(piece.cells, placement)) {
     if (cell.row < 0 || cell.col < 0 || cell.row >= rows || cell.col >= cols) return false;
+    if (mask[cell.row * cols + cell.col] === 0) return false;
     const holder = occupied[cell.row * cols + cell.col]!;
     if (holder !== -1 && holder !== clusterId) return false;
   }
@@ -195,9 +211,15 @@ export function applyPlacement(state: PuzzleState, clusterId: number, placement:
 /** Fraction of the board covered. The free-form answer to "how far along am I". */
 export function coverage(state: PuzzleState): number {
   const grid = occupancy(state);
+  const mask = boardMask(state);
   let filled = 0;
-  for (const owner of grid) if (owner !== -1) filled++;
-  return grid.length === 0 ? 0 : filled / grid.length;
+  let total = 0;
+  for (let i = 0; i < grid.length; i++) {
+    if (mask[i] === 0) continue;
+    total++;
+    if (grid[i] !== -1) filled++;
+  }
+  return total === 0 ? 0 : filled / total;
 }
 
 /**

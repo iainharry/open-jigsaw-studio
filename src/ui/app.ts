@@ -16,6 +16,7 @@ import {
   generateGeometry,
   generatePolyominoGeometry,
   applyPlacement,
+  bringToFront,
   coverage,
   findBoardSnap,
   isBoardFull,
@@ -25,6 +26,7 @@ import {
   type ImageEdit,
   groupByColour,
   liveMembers,
+  moveClusters,
   nameCluster,
   neighbourClusters,
   oklabToRgb,
@@ -189,6 +191,8 @@ export class App {
     cut: HTMLSelectElement;
     rules: HTMLSelectElement;
     polySize: HTMLSelectElement;
+    shapeSet: HTMLSelectElement;
+    silhouette: HTMLSelectElement;
     polyEdges: HTMLSelectElement;
     pictureMode: HTMLSelectElement;
     settings: HTMLElement;
@@ -196,6 +200,7 @@ export class App {
     setTable: HTMLSelectElement;
     setEdges: HTMLSelectElement;
     setAutosave: HTMLSelectElement;
+    setHaptics: HTMLInputElement;
     setNote: HTMLElement;
     edgesOnly: HTMLButtonElement;
   };
@@ -273,8 +278,12 @@ export class App {
       onDrop: (result) => {
         // Free-form never merges, so a merge count is the wrong thing to save on: every
         // placement changes the board and none of them would ever have been written.
-        if (this.freeform) void this.save();
+        if (this.freeform) {
+          this.buzz();
+          void this.save();
+        }
         if (result.merges > 0) {
+          this.buzz();
           void this.save();
           // A merge can change which groups are named: mergeClusters() lets a name
           // survive absorbing an unnamed group, and two named groups joining leaves one.
@@ -427,6 +436,22 @@ export class App {
                 <option value="5">Extra large</option>
               </select>
             </label>
+            <label class="field poly-only" data-help="Which shapes to cut. Pentominoes are the classic twelve five-square shapes; tetrominoes are the four-square ones. Mixed uses everything.">Shapes
+              <select class="shape-set">
+                <option value="mixed">Mixed</option>
+                <option value="tetrominoes">Tetrominoes</option>
+                <option value="pentominoes">Pentominoes</option>
+              </select>
+            </label>
+            <label class="field poly-only" data-help="Fill an outline instead of a rectangle. The pieces have to cover the shape exactly \u2014 a diamond or a cross is markedly harder than a rectangle, because the edge gives you fewer straight runs to work along.">Outline
+              <select class="silhouette">
+                <option value="rectangle">Rectangle</option>
+                <option value="diamond">Diamond</option>
+                <option value="ellipse">Oval</option>
+                <option value="cross">Cross</option>
+                <option value="frame">Frame</option>
+              </select>
+            </label>
             <label class="field poly-only" data-help="Tabs interlock like a jigsaw. Flat gives straight cuts, which looks cleaner and is considerably harder because nothing holds together visually.">Edges
               <select class="poly-edges">
                 <option value="tabs">Tabs</option>
@@ -440,7 +465,7 @@ export class App {
               </select>
             </label>
           </span>
-          <button class="btn" data-act="name-group" data-help="Give the selected group of joined pieces a name, so you can find it again. The name shows on the board and in the Groups list.">Name group</button>
+          <button class="btn" data-act="name-group" data-help="Name the group of joined pieces you last touched, so you can find it again. Touch a piece, press this, and type. The name shows on the board and in the Groups list.">Name group</button>
             <label class="field" data-help="Jump to a named group of joined pieces. Choosing one selects it and brings it into view.">Groups
               <select class="group-list"></select>
             </label>
@@ -483,6 +508,9 @@ export class App {
             </label>
             <label class="set-row">Autosave
               <select class="set-autosave"></select>
+            </label>
+            <label class="set-row">Buzz when a piece lands
+              <input type="checkbox" class="set-haptics" />
             </label>
             <p class="set-note"></p>
           </div>
@@ -537,6 +565,8 @@ export class App {
       cut: q<HTMLSelectElement>('.cut'),
       rules: q<HTMLSelectElement>('.rules'),
       polySize: q<HTMLSelectElement>('.poly-size'),
+      shapeSet: q<HTMLSelectElement>('.shape-set'),
+      silhouette: q<HTMLSelectElement>('.silhouette'),
       polyEdges: q<HTMLSelectElement>('.poly-edges'),
       pictureMode: q<HTMLSelectElement>('.picture-mode'),
       settings: q<HTMLElement>('.settings'),
@@ -544,6 +574,7 @@ export class App {
       setTable: q<HTMLSelectElement>('.set-table'),
       setEdges: q<HTMLSelectElement>('.set-edges'),
       setAutosave: q<HTMLSelectElement>('.set-autosave'),
+      setHaptics: q<HTMLInputElement>('.set-haptics'),
       setNote: q<HTMLElement>('.set-note'),
       edgesOnly: q<HTMLButtonElement>('[data-act="edges-only"]'),
     };
@@ -641,7 +672,15 @@ export class App {
       if (Number.isFinite(id) && id >= 0) this.goToGroup(id);
     });
     this.els.pieces.addEventListener('change', () => void this.newPuzzle());
-    for (const control of [this.els.cut, this.els.rules, this.els.polySize, this.els.polyEdges, this.els.pictureMode]) {
+    for (const control of [
+      this.els.cut,
+      this.els.rules,
+      this.els.polySize,
+      this.els.polyEdges,
+      this.els.shapeSet,
+      this.els.silhouette,
+      this.els.pictureMode,
+    ]) {
       control.addEventListener('change', () => {
         this.updateCutUi();
         void this.newPuzzle();
@@ -672,6 +711,9 @@ export class App {
       else if (e.key === '0') this.fitBoard();
       else if (e.key === '9') this.fitAll();
       else if (e.key === 't' || e.key === 'T') this.newTray();
+      else if (e.key === 'Tab') this.cycleSelection(e.shiftKey ? -1 : 1);
+      else if (e.key.startsWith('Arrow')) this.nudgeSelection(e.key, e.shiftKey);
+      else if (e.key === 'Enter' || e.key === ' ') this.placeSelection();
       else return;
       e.preventDefault();
     });
@@ -835,6 +877,13 @@ export class App {
           ...GEOMETRY_OPTIONS,
           targetCells,
           flatEdges,
+          shapeSet: this.els.shapeSet.value as 'mixed' | 'tetrominoes' | 'pentominoes',
+          silhouette: this.els.silhouette.value as
+            | 'rectangle'
+            | 'diamond'
+            | 'ellipse'
+            | 'cross'
+            | 'frame',
         })
       : generateGeometry(seed, rows, cols, image.width, image.height, GEOMETRY_OPTIONS);
     const state = stateFromGeometry(geometry, {
@@ -955,6 +1004,11 @@ export class App {
     this.els.pictureMode.value = record.picture === 'colours' ? 'colours' : 'photo';
     this.els.rules.value = record.rules === 'anyfit' ? 'anyfit' : 'match';
     this.els.cut.value = state.geometry.cut === 'polyomino' ? 'shapes' : 'classic';
+    const opts = state.geometry.polyominoOptions ?? {};
+    if (typeof opts['shapeSet'] === 'string') this.els.shapeSet.value = opts['shapeSet'];
+    if (typeof opts['silhouette'] === 'string') this.els.silhouette.value = opts['silhouette'];
+    if (typeof opts['targetCells'] === 'number') this.els.polySize.value = String(opts['targetCells']);
+    this.els.polyEdges.value = opts['flatEdges'] === true ? 'flat' : 'tabs';
     this.updateCutUi();
     this.els.title.value = record.title;
     this.els.pieces.value = String(
@@ -1311,6 +1365,11 @@ export class App {
       this.appearance.autosaveMs = Number(this.els.setAutosave.value);
       this.applyAppearance();
     });
+    this.els.setHaptics.addEventListener('change', () => {
+      this.appearance.haptics = this.els.setHaptics.checked;
+      this.applyAppearance();
+      if (this.appearance.haptics) this.buzz();
+    });
 
     this.els.settings.addEventListener('click', (e) => {
       if (e.target === this.els.settings) this.els.settings.hidden = true;
@@ -1332,6 +1391,7 @@ export class App {
     this.els.setTable.value = this.appearance.table;
     this.els.setEdges.value = this.appearance.edges;
     this.els.setAutosave.value = String(this.appearance.autosaveMs);
+    this.els.setHaptics.checked = this.appearance.haptics;
     this.els.setNote.textContent =
       this.appearance.autosaveMs === 0
         ? 'A save always follows pieces joining and any change in My puzzles. This setting only governs the idle save that catches pieces moved without being joined.'
@@ -1355,6 +1415,85 @@ export class App {
    */
   private puzzleDone(state: PuzzleState): boolean {
     return this.freeform ? isBoardFull(state) : isComplete(state);
+  }
+
+  /**
+   * Keyboard play.
+   *
+   * Not decoration: without it the app cannot be used at all by anyone who does not drive
+   * a pointer, and "drag the piece" is the only verb the whole application has. Tab picks
+   * a piece up, the arrows carry it, Enter puts it down — the same three actions a mouse
+   * performs, in the same order.
+   */
+  private cycleSelection(direction: number): void {
+    if (!this.session) return;
+    const ids = [...this.session.state.clusters.keys()].sort((a, b) => a - b);
+    if (ids.length === 0) return;
+    const current = this.selection.size === 1 ? [...this.selection][0]! : -1;
+    const at = ids.indexOf(current);
+    const next = ids[(((at + direction) % ids.length) + ids.length) % ids.length]!;
+
+    this.selection.clear();
+    this.selection.add(next);
+    this.syncSelection();
+    bringToFront(this.session.state, next);
+
+    // Bring it into view rather than selecting something off-screen, which would look
+    // like nothing happening.
+    const bounds = clusterWorldBounds(this.session.state, next);
+    if (bounds) {
+      const size = this.renderer.size;
+      const half = { w: size.width / 2 / this.viewport.zoom, h: size.height / 2 / this.viewport.zoom };
+      const cx = (bounds.minX + bounds.maxX) / 2;
+      const cy = (bounds.minY + bounds.maxY) / 2;
+      if (Math.abs(cx - this.viewport.x) > half.w * 0.8 || Math.abs(cy - this.viewport.y) > half.h * 0.8) {
+        this.viewport = { ...this.viewport, x: cx, y: cy };
+      }
+    }
+    this.dirty = true;
+    this.updateStatus();
+  }
+
+  /** Move the selection with the arrow keys. Shift moves a whole cell at a time. */
+  private nudgeSelection(key: string, coarse: boolean): void {
+    if (!this.session || this.selection.size === 0) return;
+    const { cellWidth, cellHeight } = this.session.state.geometry;
+    const stepX = coarse ? cellWidth : cellWidth / 4;
+    const stepY = coarse ? cellHeight : cellHeight / 4;
+    const dx = key === 'ArrowLeft' ? -stepX : key === 'ArrowRight' ? stepX : 0;
+    const dy = key === 'ArrowUp' ? -stepY : key === 'ArrowDown' ? stepY : 0;
+    moveClusters(this.session.state, [...this.selection], dx, dy);
+    this.dirty = true;
+  }
+
+  /** Put the selection down: the same release a mouse performs on letting go. */
+  private placeSelection(): void {
+    if (!this.session || this.selection.size === 0) return;
+    const result = this.releaseFreeform([...this.selection]);
+    const kept = [...this.selection].filter((id) => this.session!.state.clusters.has(id));
+    this.selection.clear();
+    for (const id of kept) this.selection.add(id);
+    this.syncSelection();
+    if (result.merges > 0 || this.freeform) this.buzz();
+    this.dirty = true;
+    this.updateStatus();
+    void this.save();
+  }
+
+  /**
+   * A short buzz when a piece lands.
+   *
+   * The one piece of feedback a touchscreen cannot give any other way: on a tablet there
+   * is no click, no resistance and nothing under your finger, so a piece joining is
+   * otherwise a purely visual event happening under the hand covering it.
+   */
+  private buzz(): void {
+    if (!this.appearance.haptics) return;
+    try {
+      navigator.vibrate?.(18);
+    } catch {
+      /* not supported, or blocked by a permissions policy -- silence is the right result */
+    }
   }
 
   /** True when the open puzzle is played by "any arrangement that fills the frame". */
@@ -1432,18 +1571,26 @@ export class App {
    */
   private nameSelectedGroup(): void {
     if (!this.session) return;
-    if (this.selection.size !== 1) {
-      this.setStatus(
-        this.selection.size === 0
-          ? 'Select a group first — Shift+click a piece, or use Select mode.'
-          : `Name one group at a time — ${this.selection.size} are selected.`,
-      );
+    if (this.selection.size > 1) {
+      this.setStatus(`Name one group at a time — ${this.selection.size} are selected.`);
       return;
     }
-    const clusterId = [...this.selection][0]!;
-    const cluster = this.session.state.clusters.get(clusterId);
-    if (!cluster) return;
 
+    // Falls back to the piece last picked up, for the same reason hints do: a plain click
+    // starts a drag and *clears* the selection, so "select the group first" describes a
+    // gesture most people never make. Reported by the user as "how do I actually name a
+    // group?", which is the right question to ask of a feature that needs a manual.
+    const clusterId =
+      this.selection.size === 1
+        ? [...this.selection][0]!
+        : this.hintPieceId !== null
+          ? (this.session.state.clusterOfPiece[this.hintPieceId] ?? -1)
+          : -1;
+    if (clusterId < 0 || !this.session.state.clusters.has(clusterId)) {
+      this.setStatus('Touch a piece first, then press Name group.');
+      return;
+    }
+    const cluster = this.session.state.clusters.get(clusterId)!;
     const bounds = clusterWorldBounds(this.session.state, clusterId);
     if (!bounds) return;
     const canvasBox = this.canvas.getBoundingClientRect();

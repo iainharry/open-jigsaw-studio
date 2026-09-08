@@ -3,6 +3,8 @@ import {
   SHAPES,
   generatePolyominoGeometry,
   rotations,
+  inSilhouette,
+  silhouetteMask,
   tile,
   tilingStats,
 } from '../polyomino.js';
@@ -270,5 +272,132 @@ describe('generatePolyominoGeometry', () => {
     const state = stateFromGeometry(geo(), DEFAULT_SETTINGS);
     expect(state.clusters.size).toBe(state.geometry.pieces.length);
     expect(state.clusterOfPiece.length).toBe(state.geometry.pieces.length);
+  });
+});
+
+describe('shape sets', () => {
+  it('offers all twelve free pentominoes', () => {
+    const fives = SHAPES.filter((s) => s.cells.length === 5);
+    expect(fives).toHaveLength(12);
+    // Free pentominoes are distinct under rotation; the set must not contain duplicates.
+    const seen = new Set(fives.map((s) => JSON.stringify(rotations(s)[0])));
+    expect(seen.size).toBe(12);
+  });
+
+  it('pentominoes-only uses five-cell shapes for nearly every cell', () => {
+    for (const seed of [1, 40, 777]) {
+      const t = tile(seed, 12, 15, { shapeSet: 'pentominoes', targetCells: 5 });
+      const cells = t.pieces.reduce((n, p) => n + p.length, 0);
+      const inFives = t.pieces.filter((p) => p.length === 5).reduce((n, p) => n + p.length, 0);
+      expect(cells).toBe(12 * 15);
+      expect(inFives / cells).toBeGreaterThan(0.85);
+    }
+  });
+
+  it('tetrominoes-only never uses a five-cell shape', () => {
+    const t = tile(6, 10, 12, { shapeSet: 'tetrominoes', targetCells: 4 });
+    expect(t.pieces.some((p) => p.length === 5)).toBe(false);
+  });
+
+  it('keeps the small fallbacks whatever the set, so generation cannot fail', () => {
+    // A pentominoes-only tiler with no fallback can be unable to fill an awkward corner.
+    // Refusing to generate would be worse than an occasional small piece.
+    for (const seed of [2, 3, 11]) {
+      const t = tile(seed, 7, 7, { shapeSet: 'pentominoes' });
+      expect([...t.owner].every((o) => o >= 0)).toBe(true);
+    }
+  });
+});
+
+describe('silhouettes', () => {
+  it('a rectangle includes every cell', () => {
+    const mask = silhouetteMask(6, 8, 'rectangle');
+    expect([...mask].every((v) => v === 1)).toBe(true);
+  });
+
+  it('other outlines exclude the corners and keep the middle', () => {
+    for (const shape of ['diamond', 'ellipse'] as const) {
+      const rows = 11;
+      const cols = 11;
+      expect(inSilhouette(0, 0, rows, cols, shape)).toBe(false);
+      expect(inSilhouette(5, 5, rows, cols, shape)).toBe(true);
+      const mask = silhouetteMask(rows, cols, shape);
+      const inside = [...mask].filter((v) => v === 1).length;
+      expect(inside).toBeGreaterThan(rows * cols * 0.4);
+      expect(inside).toBeLessThan(rows * cols);
+    }
+  });
+
+  it('a frame is hollow and a cross is not', () => {
+    expect(inSilhouette(6, 6, 13, 13, 'frame')).toBe(false);
+    expect(inSilhouette(6, 6, 13, 13, 'cross')).toBe(true);
+    expect(inSilhouette(0, 0, 13, 13, 'cross')).toBe(false);
+  });
+
+  it('tiles only the cells inside the outline', () => {
+    const t = tile(21, 11, 13, { silhouette: 'diamond' });
+    const mask = silhouetteMask(11, 13, 'diamond');
+    const covered = t.pieces.reduce((n, p) => n + p.length, 0);
+    expect(covered).toBe([...mask].filter((v) => v === 1).length);
+    for (const cells of t.pieces) {
+      for (const cell of cells) expect(mask[cell.row * 13 + cell.col]).toBe(1);
+    }
+  });
+
+  it('geometry for a silhouette leaves the outside empty and still tiles', () => {
+    const g = generatePolyominoGeometry(3, 11, 13, 1300, 1100, { silhouette: 'ellipse' });
+    const mask = silhouetteMask(11, 13, 'ellipse');
+    const covered = g.pieces.reduce((n, p) => n + p.cells.length, 0);
+    expect(covered).toBe([...mask].filter((v) => v === 1).length);
+    expect(covered).toBeLessThan(11 * 13);
+  });
+
+  it('never claims a blocked cell as a neighbour', () => {
+    // -2 marks the outside; leaking it into `adjacent` would make snapping look for a
+    // piece that does not exist.
+    const g = generatePolyominoGeometry(4, 11, 11, 1100, 1100, { silhouette: 'cross' });
+    for (const piece of g.pieces) {
+      for (const other of piece.adjacent) {
+        expect(other).toBeGreaterThanOrEqual(0);
+        expect(g.pieces[other]).toBeDefined();
+        expect(g.pieces[other]!.adjacent).toContain(piece.id);
+      }
+    }
+  });
+
+  it('marks pieces on the edge of the outline as border pieces', () => {
+    const g = generatePolyominoGeometry(8, 11, 11, 1100, 1100, { silhouette: 'diamond' });
+    const mask = silhouetteMask(11, 11, 'diamond');
+    for (const piece of g.pieces) {
+      const touchesOutside = piece.cells.some((cell) =>
+        [
+          [-1, 0],
+          [0, 1],
+          [1, 0],
+          [0, -1],
+        ].some(([dr, dc]) => {
+          const r = cell.row + dr!;
+          const c = cell.col + dc!;
+          return r < 0 || c < 0 || r >= 11 || c >= 11 || mask[r * 11 + c] === 0;
+        }),
+      );
+      expect(piece.isBorder).toBe(touchesOutside);
+    }
+  });
+
+  it('a silhouette round-trips through the save format', () => {
+    const state = stateFromGeometry(
+      generatePolyominoGeometry(31, 9, 11, 1100, 900, {
+        silhouette: 'cross',
+        shapeSet: 'pentominoes',
+        flatEdges: true,
+      }),
+      DEFAULT_SETTINGS,
+    );
+    const back = deserialize(serialize(state, {}, null)).state;
+    expect(back.geometry.pieces).toHaveLength(state.geometry.pieces.length);
+    for (const [i, piece] of back.geometry.pieces.entries()) {
+      expect(piece.cells).toEqual(state.geometry.pieces[i]!.cells);
+    }
   });
 });

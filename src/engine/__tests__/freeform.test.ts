@@ -260,3 +260,37 @@ describe('cellsAt', () => {
     expect(at).toContainEqual({ row: 4, col: 5 });
   });
 });
+
+describe('silhouette boards', () => {
+  const diamond = () =>
+    stateFromGeometry(
+      generatePolyominoGeometry(17, 11, 11, 1100, 1100, {
+        targetCells: 4,
+        flatEdges: true,
+        silhouette: 'diamond',
+      }),
+      { ...DEFAULT_SETTINGS, rotationEnabled: true },
+    );
+
+  it('a freshly cut diamond is complete, though most of the rectangle is empty', () => {
+    // Coverage measured against the rectangle would top out well below 1 and the puzzle
+    // could never be finished.
+    const state = diamond();
+    expect(coverage(state)).toBeCloseTo(1, 6);
+    expect(isBoardFull(state)).toBe(true);
+  });
+
+  it('refuses a placement in the empty corner outside the outline', () => {
+    const state = diamond();
+    const id = clusterOf(state, 0).id;
+    expect(isLegal(state, id, { row: 0, col: 0, turns: 0 })).toBe(false);
+  });
+
+  it('still notices a hole inside the outline', () => {
+    const state = diamond();
+    clusterOf(state, 0).y -= 9000;
+    expect(isBoardFull(state)).toBe(false);
+    expect(coverage(state)).toBeLessThan(1);
+    expect(coverage(state)).toBeGreaterThan(0.5);
+  });
+});

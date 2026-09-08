@@ -42,6 +42,14 @@ export type Rgb = readonly [number, number, number];
  */
 const LEVELS = [0.3, 0.92, 0.55, 0.75] as const;
 
+/**
+ * The distance past which two colours are comfortably distinct.
+ *
+ * Used as a ceiling, not a target: beyond it, extra separation is invisible, so the
+ * assignment spends the remaining freedom on variety instead.
+ */
+const LEGIBLE_ENOUGH = 60;
+
 /** How many distinct colours the palette offers. */
 export const PALETTE_SIZE = 16;
 
@@ -134,6 +142,7 @@ export function assignPieceColours(geometry: PuzzleGeometry): Rgb[] {
   const gap: number[][] = palette.map((a) => palette.map((b) => perceptualDistance(a, b)));
 
   const chosen = new Int32Array(geometry.pieces.length).fill(-1);
+  const uses = new Int32Array(PALETTE_SIZE);
   const order = [...geometry.pieces]
     .map((p) => p.id)
     .sort((a, b) => geometry.pieces[b]!.adjacent.length - geometry.pieces[a]!.adjacent.length);
@@ -144,19 +153,27 @@ export function assignPieceColours(geometry: PuzzleGeometry): Rgb[] {
       .filter((c) => c >= 0);
 
     let best = 0;
-    let bestScore = -1;
+    let bestScore = -Infinity;
     for (let entry = 0; entry < PALETTE_SIZE; entry++) {
       // The worst neighbour is what decides a candidate; a colour that is excellent
       // against three neighbours and identical to the fourth is a bad colour.
-      let score = Infinity;
+      let score = neighbours.length === 0 ? LEGIBLE_ENOUGH : Infinity;
       for (const used of neighbours) score = Math.min(score, gap[entry]![used]!);
-      if (neighbours.length === 0) score = 1000 - entry; // no constraint: keep it stable
-      if (score > bestScore) {
-        bestScore = score;
+
+      // Once a candidate is comfortably distinct from every neighbour, further distance
+      // buys nothing a player can see -- so past that point prefer the least-used entry.
+      // Without this the greedy pass kept reaching for the same few colours and a board
+      // of thirty pieces came out in five, which is legible and dull.
+      const capped = Math.min(score, LEGIBLE_ENOUGH);
+      const tieBreak = capped >= LEGIBLE_ENOUGH ? -uses[entry]! : 0;
+      const total = capped * 1000 + tieBreak;
+      if (total > bestScore) {
+        bestScore = total;
         best = entry;
       }
     }
     chosen[id] = best;
+    uses[best]!++;
   }
 
   return [...chosen].map((entry) => palette[entry]!);

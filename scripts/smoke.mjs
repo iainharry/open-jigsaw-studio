@@ -1538,6 +1538,172 @@ const filled = await page.evaluate(async () => {
 check('a full frame reads as 100%', filled.progress > 0.999, `${(filled.progress * 100).toFixed(0)}%`);
 check('and the puzzle counts as finished without anything merging', filled.completedAt !== null && filled.clusters === ffDrop.pieces, filled.status);
 
+// 16. Pentominoes, outlines, and keyboard play.
+const deeper = await page.evaluate(async () => {
+  const set = (q, v) => { document.querySelector(q).value = v; };
+  set('.rules', 'match');
+  set('.pieces', '50');
+  set('.picture-mode', 'colours');
+  set('.poly-size', '5');
+  set('.shape-set', 'pentominoes');
+  set('.silhouette', 'diamond');
+  set('.poly-edges', 'flat');
+  const cut = document.querySelector('.cut');
+  cut.value = 'shapes';
+  cut.dispatchEvent(new Event('change'));
+  await new Promise((r) => setTimeout(r, 1800));
+
+  const g = globalThis.__ojs.session.state.geometry;
+  const cells = g.pieces.reduce((n, p) => n + p.cells.length, 0);
+  const fives = g.pieces.filter((p) => p.cells.length === 5).length;
+  const inFives = g.pieces.filter((p) => p.cells.length === 5).reduce((n, p) => n + p.cells.length, 0);
+  const corner = g.pieces.some((p) => p.cells.some((c) => c.row === 0 && c.col === 0));
+  return {
+    pieces: g.pieces.length,
+    fives,
+    inFives,
+    cells,
+    rect: g.rows * g.cols,
+    corner,
+    silhouette: g.polyominoOptions?.silhouette,
+  };
+});
+// Measured in squares rather than pieces: the edge of a diamond forces some small
+// shapes, and counting pieces lets a handful of them outvote the bulk of the board.
+check('pentominoes-only fills most of the board with five-square pieces', deeper.inFives / deeper.cells > 0.6, `${deeper.inFives} of ${deeper.cells} squares, ${deeper.fives}/${deeper.pieces} pieces`);
+check('a diamond covers less than its rectangle', deeper.cells < deeper.rect, `${deeper.cells} of ${deeper.rect} squares`);
+check('and leaves the corner of the rectangle empty', deeper.corner === false);
+check('the outline is recorded for reload', deeper.silhouette === 'diamond', String(deeper.silhouette));
+
+const keyboard = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  const press = (key, shift = false) => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey: shift, bubbles: true, cancelable: true }));
+  };
+
+  app.selection.clear();
+  app.syncSelection();
+  press('Tab');
+  const afterTab = app.selection.size;
+  const picked = [...app.selection][0];
+  const cluster = st.clusters.get(picked);
+  const startX = cluster.x;
+  const startY = cluster.y;
+  press('ArrowRight');
+  press('ArrowDown', true);
+  const movedX = cluster.x - startX;
+  const movedY = cluster.y - startY;
+  press('Tab');
+  const second = [...app.selection][0];
+  press('Tab', true);
+  const backAgain = [...app.selection][0];
+  return {
+    afterTab,
+    movedX,
+    movedY,
+    cellW: st.geometry.cellWidth,
+    cellH: st.geometry.cellHeight,
+    cycled: second !== picked,
+    returned: backAgain === picked,
+  };
+});
+check('Tab picks up a piece', keyboard.afterTab === 1);
+check('an arrow key nudges it', Math.abs(keyboard.movedX - keyboard.cellW / 4) < 0.001, `moved ${keyboard.movedX.toFixed(1)} of ${(keyboard.cellW / 4).toFixed(1)}`);
+check('Shift makes the step a whole square', Math.abs(keyboard.movedY - keyboard.cellH) < 0.001, `moved ${keyboard.movedY.toFixed(1)} of ${keyboard.cellH.toFixed(1)}`);
+check('Tab moves on to another piece', keyboard.cycled === true);
+check('and Shift+Tab comes back', keyboard.returned === true);
+
+const placed = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  let buzzed = 0;
+  const realVibrate = navigator.vibrate;
+  navigator.vibrate = () => { buzzed++; return true; };
+
+  // A new puzzle scatters its pieces, so there is nothing for a released piece to snap
+  // to until a neighbour is in place. Put one neighbour home, put our piece a few pixels
+  // off its own home, and press Enter -- the same release a mouse performs on letting go.
+  const piece = st.geometry.pieces.find((p) => p.adjacent.length > 0);
+  const id = st.clusterOfPiece[piece.id];
+  const neighbourId = st.clusterOfPiece[piece.adjacent[0]];
+  const cluster = st.clusters.get(id);
+  const neighbour = st.clusters.get(neighbourId);
+  neighbour.x = neighbour.pivotX;
+  neighbour.y = neighbour.pivotY;
+  neighbour.rotation = 0;
+  cluster.x = cluster.pivotX + 6;
+  cluster.y = cluster.pivotY - 5;
+  cluster.rotation = 0;
+
+  app.selection.clear();
+  app.selection.add(id);
+  app.syncSelection();
+  const before = st.clusters.size;
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 250));
+
+  navigator.vibrate = realVibrate;
+  return {
+    joined: st.clusters.size < before,
+    before,
+    after: st.clusters.size,
+    buzzed,
+    haptics: document.querySelector('.set-haptics').checked,
+  };
+});
+check('Enter releases the piece and it joins its neighbour', placed.joined === true, `${placed.before} -> ${placed.after} clusters`);
+check('haptics are on by default', placed.haptics === true);
+check('and a landing piece buzzes', placed.buzzed > 0, `${placed.buzzed} buzz(es)`);
+
+// Reported by the user: "how do I actually name a group?" A plain click drags and clears
+// the selection, so requiring a selection first made the feature reachable only by a
+// gesture most people never make.
+const nameByTouch = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const st = app.session.state;
+  app.selection.clear();
+  app.syncSelection();
+  document.querySelector('[data-act="fit-all"]').click();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const cluster = [...st.clusters.values()][0];
+  const piece = st.geometry.pieces[cluster.pieces[0]];
+  const zi = st.zOrder.indexOf(cluster.id);
+  if (zi >= 0) { st.zOrder.splice(zi, 1); st.zOrder.push(cluster.id); }
+  app.dirty = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const board = document.querySelector('.board');
+  const rect = board.getBoundingClientRect();
+  const vp = app.viewport;
+  const sx = (cluster.x + (piece.solved.x - cluster.pivotX) + piece.bounds.w / 2 - vp.x) * vp.zoom + rect.width / 2 + rect.left;
+  const sy = (cluster.y + (piece.solved.y - cluster.pivotY) + piece.bounds.h / 2 - vp.y) * vp.zoom + rect.height / 2 + rect.top;
+  fireEv(board, 'pointerdown', sx, sy);
+  await new Promise((z) => requestAnimationFrame(z));
+  fireEv(board, 'pointerup', sx, sy);
+  await new Promise((z) => setTimeout(z, 150));
+
+  const selectedAfterClick = app.selection.size;
+  document.querySelector('[data-act="name-group"]').click();
+  const input = document.querySelector('.tray-rename');
+  const offered = !input.hidden;
+  if (offered) {
+    input.value = 'Touched group';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return {
+    selectedAfterClick,
+    offered,
+    names: [...st.clusters.values()].map((c) => c.name).filter(Boolean),
+  };
+}, fire);
+check('a plain click still selects nothing', nameByTouch.selectedAfterClick === 0);
+check('but Name group works on the piece you touched', nameByTouch.offered === true);
+check('and the name is stored', nameByTouch.names.includes('Touched group'), nameByTouch.names.join(', ') || 'none');
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

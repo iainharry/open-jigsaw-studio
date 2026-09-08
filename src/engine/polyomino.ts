@@ -57,8 +57,24 @@ export interface ShapeTemplate {
  * and organic growth produces neither — it produces blobs that happen to be four cells
  * big. `single` and `domino` are the fallbacks that guarantee the tiler terminates.
  */
+const c = (...pairs: [number, number][]): Cell[] =>
+  pairs.map(([row, col]) => ({ row, col }));
+
 export const SHAPES: readonly ShapeTemplate[] = [
-  { name: 'plus', cells: [{ row: 0, col: 1 }, { row: 1, col: 0 }, { row: 1, col: 1 }, { row: 1, col: 2 }, { row: 2, col: 1 }] },
+  // The twelve free pentominoes, by their conventional letters. Having all of them is
+  // what makes a pentominoes-only puzzle a real one rather than a plus sign repeated.
+  { name: 'F', cells: c([0, 1], [0, 2], [1, 0], [1, 1], [2, 1]) },
+  { name: 'I5', cells: c([0, 0], [1, 0], [2, 0], [3, 0], [4, 0]) },
+  { name: 'L5', cells: c([0, 0], [1, 0], [2, 0], [3, 0], [3, 1]) },
+  { name: 'N', cells: c([0, 1], [1, 1], [2, 0], [2, 1], [3, 0]) },
+  { name: 'P', cells: c([0, 0], [0, 1], [1, 0], [1, 1], [2, 0]) },
+  { name: 'T5', cells: c([0, 0], [0, 1], [0, 2], [1, 1], [2, 1]) },
+  { name: 'U', cells: c([0, 0], [0, 2], [1, 0], [1, 1], [1, 2]) },
+  { name: 'V', cells: c([0, 0], [1, 0], [2, 0], [2, 1], [2, 2]) },
+  { name: 'W', cells: c([0, 0], [1, 0], [1, 1], [2, 1], [2, 2]) },
+  { name: 'plus', cells: c([0, 1], [1, 0], [1, 1], [1, 2], [2, 1]) },
+  { name: 'Y', cells: c([0, 1], [1, 0], [1, 1], [2, 1], [3, 1]) },
+  { name: 'Z5', cells: c([0, 0], [0, 1], [1, 1], [2, 1], [2, 2]) },
   { name: 'L', cells: [{ row: 0, col: 0 }, { row: 1, col: 0 }, { row: 2, col: 0 }, { row: 2, col: 1 }] },
   { name: 'J', cells: [{ row: 0, col: 1 }, { row: 1, col: 1 }, { row: 2, col: 1 }, { row: 2, col: 0 }] },
   { name: 'T', cells: [{ row: 0, col: 0 }, { row: 0, col: 1 }, { row: 0, col: 2 }, { row: 1, col: 1 }] },
@@ -100,11 +116,74 @@ export function rotations(shape: ShapeTemplate): Cell[][] {
   return out;
 }
 
+/** Which shapes the tiler may use. */
+export type ShapeSet = 'mixed' | 'tetrominoes' | 'pentominoes';
+
+/**
+ * The outline the pieces have to fill.
+ *
+ * Named rather than passed as a predicate, because these options are stored in the save
+ * file and regenerated from it — a function cannot survive JSON, and a puzzle that could
+ * not be reopened would be worse than no silhouettes at all.
+ */
+export type Silhouette = 'rectangle' | 'diamond' | 'ellipse' | 'cross' | 'frame';
+
 export interface PolyominoOptions extends GeometryOptions {
   /** Average cells per piece the tiler aims for. Larger means fewer, chunkier pieces. */
   readonly targetCells?: number;
   /** Flat cuts instead of interlocking tabs. */
   readonly flatEdges?: boolean;
+  readonly shapeSet?: ShapeSet;
+  readonly silhouette?: Silhouette;
+}
+
+/** Is this cell part of the puzzle, or outside the silhouette? */
+export function inSilhouette(
+  row: number,
+  col: number,
+  rows: number,
+  cols: number,
+  shape: Silhouette = 'rectangle',
+): boolean {
+  const midR = (rows - 1) / 2;
+  const midC = (cols - 1) / 2;
+  const dr = rows <= 1 ? 0 : (row - midR) / (rows / 2);
+  const dc = cols <= 1 ? 0 : (col - midC) / (cols / 2);
+  switch (shape) {
+    case 'diamond':
+      return Math.abs(dr) + Math.abs(dc) <= 1.02;
+    case 'ellipse':
+      return dr * dr + dc * dc <= 1.02;
+    case 'cross': {
+      const armR = Math.max(1, Math.floor(rows / 3));
+      const armC = Math.max(1, Math.floor(cols / 3));
+      return (
+        (row >= armR && row < rows - armR) || (col >= armC && col < cols - armC)
+      );
+    }
+    case 'frame': {
+      const inR = Math.max(1, Math.floor(rows / 4));
+      const inC = Math.max(1, Math.floor(cols / 4));
+      return row < inR || row >= rows - inR || col < inC || col >= cols - inC;
+    }
+    default:
+      return true;
+  }
+}
+
+/** Cells that make up a silhouette, as a flat blocked/free map. */
+export function silhouetteMask(
+  rows: number,
+  cols: number,
+  shape: Silhouette = 'rectangle',
+): Uint8Array {
+  const mask = new Uint8Array(rows * cols);
+  for (let r = 0; r < rows; r++) {
+    for (let col = 0; col < cols; col++) {
+      mask[r * cols + col] = inSilhouette(r, col, rows, cols, shape) ? 1 : 0;
+    }
+  }
+  return mask;
 }
 
 const NEIGHBOURS = [
@@ -138,12 +217,29 @@ export function tile(
   options: PolyominoOptions = {},
 ): Tiling {
   const target = Math.max(1, Math.min(5, Math.round(options.targetCells ?? 4)));
+  const mask = silhouetteMask(rows, cols, options.silhouette ?? 'rectangle');
+  // -2 marks a cell outside the silhouette: never free, never assigned, and not counted
+  // as covered. Using the owner map for it keeps every "is this cell available" check in
+  // one place rather than threading a second grid through the whole tiler.
   const owner = new Int32Array(rows * cols).fill(-1);
+  for (let i = 0; i < owner.length; i++) if (mask[i] === 0) owner[i] = -2;
   const pieces: Cell[][] = [];
+
+  // A shape set restricts the vocabulary, but the domino and the single stay in it
+  // whatever is chosen: without a guaranteed fallback the greedy pass could fail to
+  // place anything at all, and a pentominoes-only puzzle that sometimes refuses to
+  // generate would be worse than one with the occasional small piece in it.
+  const set = options.shapeSet ?? 'mixed';
+  const allowed = SHAPES.filter((shape) => {
+    if (shape.cells.length <= 2) return true;
+    if (set === 'pentominoes') return shape.cells.length === 5;
+    if (set === 'tetrominoes') return shape.cells.length === 4;
+    return true;
+  });
 
   // Shapes near the target size first, so the dial actually changes the result rather
   // than only changing which shapes are theoretically allowed.
-  const ordered = [...SHAPES].sort(
+  const ordered = [...allowed].sort(
     (a, b) =>
       Math.abs(a.cells.length - target) - Math.abs(b.cells.length - target) ||
       b.cells.length - a.cells.length,
@@ -226,7 +322,9 @@ export function tilingStats(tiling: Tiling): {
   /** Fraction of cells living in pieces of three or more. */
   chunky: number;
 } {
-  const total = tiling.rows * tiling.cols;
+  // Counted from the pieces, not rows x cols: with a silhouette most of the rectangle
+  // may not be part of the puzzle at all.
+  const total = tiling.pieces.reduce((n, cells) => n + cells.length, 0);
   let singles = 0;
   let inChunky = 0;
   for (const cells of tiling.pieces) {
@@ -345,8 +443,12 @@ export function generatePolyominoGeometry(
     const from = point(kind === 'h' ? c : c, kind === 'h' ? r : r);
     const to = point(kind === 'h' ? c + 1 : c, kind === 'h' ? r : r + 1);
 
+    // An edge is an outer edge when either side of it is off the grid *or* outside the
+    // silhouette. A tab there would stick out into nothing.
+    const solid = (rr: number, cc: number): boolean =>
+      rr >= 0 && cc >= 0 && rr < rows && cc < cols && tiling.owner[rr * cols + cc]! >= 0;
     const onBorder =
-      kind === 'h' ? r === 0 || r === rows : c === 0 || c === cols;
+      kind === 'h' ? !solid(r - 1, c) || !solid(r, c) : !solid(r, c - 1) || !solid(r, c);
     const built =
       flat || onBorder
         ? straightEdge(from, to)
@@ -401,6 +503,11 @@ export function generatePolyominoGeometry(
           continue;
         }
         const other = tiling.owner[r * cols + c]!;
+        // -2 is outside the silhouette. It is an outside edge, not a neighbour.
+        if (other === -2) {
+          isBorder = true;
+          continue;
+        }
         if (other !== index) adjacent.add(other);
       }
     }

@@ -56,7 +56,7 @@ the `Network:` address it prints rather than `localhost`.
 | command | what it does |
 |---|---|
 | `npm run dev` | dev server with hot reload |
-| `npm test` | 198 headless engine tests, ~2 s |
+| `npm test` | 215 headless engine tests, ~3 s |
 | `npm run typecheck` | TypeScript strict-mode check |
 | `npm run build` | production build into `dist/` |
 | `npm run preview` | serve the production build |
@@ -166,7 +166,7 @@ where a piece was originally cut from, which is neither a hint nor the only righ
 
 ## Naming a group
 
-Select a group of joined pieces and press **Name group**. Type a name — "the lighthouse",
+Touch a piece and press **Name group**. Type a name — "the lighthouse",
 "top left sky" — and it appears on the board above that group and in the **Groups** list
 in the toolbar. Choosing it from the list selects the group and brings it into view,
 however far away it has drifted.
@@ -195,6 +195,20 @@ complete. A colour each makes that impossible.
 The colours are chosen so that no two *touching* pieces are hard to tell apart, including
 for red-green and blue-yellow colour blindness — the palette varies brightness as well as
 hue, so it also reads in greyscale. This is checked by the tests rather than assumed.
+
+## Playing without a mouse
+
+The whole app can be driven from the keyboard. **Tab** picks up a piece and brings it into
+view, **Shift+Tab** goes back. The **arrow keys** carry it — a quarter square at a time, or
+a whole square with **Shift** held. **Enter** puts it down, snapping and joining exactly as
+letting go of the mouse would. **R** and **Shift+R** turn it, **Esc** lets go.
+
+On a phone or tablet the app gives a short buzz when a piece lands, which you can switch
+off in Settings. It is the one bit of feedback a touchscreen cannot give any other way —
+there is no click and no resistance, and the piece is under the hand covering it.
+
+There is deliberately no reduce-motion setting: nothing in the app animates, so it would
+be a placebo.
 
 ## Settings
 
@@ -316,10 +330,10 @@ Full table, including the zoomed-in case where culling removes 95% of the work, 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
 edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable files), image
 preparation, assistance levels, notes/difficulty/history, appearance, autosave and sharing — which
-completes the original brief — a second cut that makes shape pieces, named groups, and free-form solving. Deliberately deferred: tags and search, which solve a problem
+completes the original brief — a second cut that makes shape pieces, named groups, free-form solving, pentominoes and outlines, and keyboard play. Deliberately deferred: tags and search, which solve a problem
 a five-puzzle library does not have, and a TV/remote-control interface, which is a
 different input model rather than a layout change.
-`ARCHITECTURE.md` §24 lists what is deliberately not built.
+`ARCHITECTURE.md` §25 lists what is deliberately not built.
 
 ## Licence
 

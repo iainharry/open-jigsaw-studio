@@ -29,6 +29,14 @@ export interface Appearance {
    * around without being joined to anything.
    */
   autosaveMs: number;
+  /**
+   * A short buzz when a piece lands.
+   *
+   * On by default where the device supports it: on a touchscreen there is no click and
+   * nothing under your finger, so a piece joining is otherwise a purely visual event
+   * happening beneath the hand covering it.
+   */
+  haptics: boolean;
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -36,6 +44,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   table: 'slate',
   edges: 'subtle',
   autosaveMs: 20_000,
+  haptics: true,
 };
 
 /** The surface pieces are laid out on, and the tint of the picture area within it. */
@@ -92,6 +101,7 @@ export function loadAppearance(): Appearance {
         AUTOSAVE_CHOICES.some((c) => c.value === parsed.autosaveMs)
           ? parsed.autosaveMs
           : DEFAULT_APPEARANCE.autosaveMs,
+      haptics: parsed.haptics !== false,
     };
   } catch {
     return { ...DEFAULT_APPEARANCE };

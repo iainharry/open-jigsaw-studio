@@ -97,3 +97,20 @@ describe('assignPieceColours', () => {
     expect(worstNeighbourGap(shapes, byId)).toBeLessThan(LEGIBLE);
   });
 });
+
+describe('colour variety', () => {
+  it('uses most of the palette rather than the same few entries', () => {
+    // The guarantee is about neighbours, but a board legible and dull is still dull: an
+    // earlier greedy pass painted thirty pieces in five colours.
+    const g = generatePolyominoGeometry(17, 11, 13, 1300, 1100, { targetCells: 4 });
+    const used = new Set(assignPieceColours(g).map((c) => c.join(',')));
+    expect(used.size).toBeGreaterThan(8);
+  });
+
+  it('and still never puts two of the same beside each other', () => {
+    for (const seed of [17, 60, 123]) {
+      const g = generatePolyominoGeometry(seed, 11, 13, 1300, 1100, { targetCells: 4 });
+      expect(worstNeighbourGap(g, assignPieceColours(g))).toBeGreaterThan(LEGIBLE);
+    }
+  });
+});

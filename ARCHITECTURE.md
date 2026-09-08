@@ -1,8 +1,8 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M12 (engine, selection, rotation, library, trays,
+Status of this document: covers M1 to M14 (engine, selection, rotation, library, trays,
 colour sorting, shipping, image preparation, assistance levels, notes and history,
-appearance/autosave/sharing, the polyomino cut, accessible colours, named groups and free-form solving).
+appearance/autosave/sharing, the polyomino cut, accessible colours, named groups, free-form solving, deeper shape puzzles and keyboard play).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -20,7 +20,7 @@ decision in the project, for two reasons.
 
 **Testability.** A browser driver cannot usefully assert that releasing a piece twelve
 pixels from its neighbour merges two clusters. A Node test can, in about a millisecond.
-All 198 current tests run headless in about 2 seconds. If engine code ever needs jsdom, the
+All 215 current tests run headless in about 3 seconds. If engine code ever needs jsdom, the
 boundary has leaked and the fix is to move the offending code out of `engine/`.
 
 **Performance.** Piece positions never pass through the UI layer. At 2,000 pieces and
@@ -862,7 +862,68 @@ check now drives the rule and says so. Writing a third pointer-level test that w
 sensitive to whatever mode and zoom earlier sections left behind would have bought
 nothing, and pretending it tested the drag would have been worse.
 
-## 24. Known limitations after M2
+## 24. Deeper shape puzzles, and reach
+
+**All twelve free pentominoes** are in the vocabulary, with shape sets for pentominoes,
+tetrominoes or mixed. The domino and single square stay available whatever is chosen: a
+pentominoes-only tiler with no fallback can be unable to fill an awkward corner, and a
+puzzle that sometimes refuses to generate would be worse than one with the occasional
+small piece in it. The test measures five-square coverage in *squares* rather than pieces,
+because the edge of a silhouette forces some small shapes and counting pieces lets a
+handful of them outvote the bulk of the board.
+
+**Silhouettes** — diamond, oval, cross, frame — make the pieces fill an outline rather
+than a rectangle. Named rather than passed as a predicate, because the options are stored
+in the save file and regenerated from it: a function cannot survive JSON, and a puzzle
+that could not be reopened would be worse than no silhouettes at all.
+
+A cell outside the outline is marked `-2` in the owner map rather than tracked in a second
+grid, so every "is this cell available" question stays in one place. Three things had to
+learn about it: adjacency must not report `-2` as a neighbouring piece, a piece beside the
+outside is a border piece, and an edge with nothing behind it is never tabbed. Free-form
+coverage counts outline cells, not the rectangle — measured against the rectangle a
+diamond could never read as finished — and a placement outside the outline is refused.
+
+**Colour variety.** The adjacency colouring was correct and dull: thirty pieces came out
+in five colours, because a greedy maximiser keeps choosing the same best entry. Distance
+is now capped at the point where two colours are comfortably distinct, and the remaining
+freedom is spent on the least-used entry. The neighbour guarantee is unchanged and still
+asserted; only the boredom is gone.
+
+### Reach
+
+**Keyboard play** is not decoration. Without it the app cannot be used at all by anyone who
+does not drive a pointer, and "drag the piece" is the only verb the whole application has.
+Tab picks a piece up and brings it into view, the arrows carry it (Shift for a whole
+square), Enter puts it down through the same release a mouse performs. Three actions, in
+the same order as the mouse.
+
+**Haptics** are the one piece of feedback a touchscreen cannot give any other way: no
+click, no resistance, and the piece is under the hand covering it.
+
+**Reduce-motion was considered and deliberately not built.** Nothing in the app animates —
+views jump, pieces follow the pointer, and there is no transition anywhere. A setting for
+it would be a placebo, and a placebo accessibility setting is worse than none because it
+tells someone their need has been met when it has not.
+
+**The outline colours were checked rather than changed.** Selection blue against hint amber
+measures 155 apart under the least favourable vision, so they were already fine. Worth
+recording that the answer to an accessibility question was sometimes "measure it and leave
+it alone".
+
+### "How do I actually name a group?"
+
+Asked by the user, and the right question of a feature that needs a manual. Naming
+required a selection, and a plain click starts a drag and *clears* the selection — so
+"select the group first" described a gesture most people never make. Exactly the trap
+hints fell into, in the same codebase, four milestones apart, and I did not recognise it
+the second time until it was reported.
+
+Name group now falls back to the piece you last touched, sharing the mechanism hints
+already use. The smoke test asserts the whole path: a plain click selects nothing, and
+Name group works anyway.
+
+## 25. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.
