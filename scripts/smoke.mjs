@@ -1399,8 +1399,8 @@ const groupNamed = await page.evaluate(async () => {
 });
 check('naming offers a field that is actually on screen', groupNamed.offered === true);
 check('the name reaches the cluster', groupNamed.stored === 'The lighthouse', String(groupNamed.stored));
-check('and appears in the Groups list', groupNamed.options.some((t) => t.includes('The lighthouse')), groupNamed.options.join(' | '));
-check('the Groups list becomes usable once something is named', groupNamed.enabled === true);
+check('and appears in the Named list', groupNamed.options.some((t) => t.includes('The lighthouse')), groupNamed.options.join(' | '));
+check('the Named list becomes usable once something is named', groupNamed.enabled === true);
 
 const jumped = await page.evaluate(async () => {
   const app = globalThis.__ojs;
@@ -1410,7 +1410,7 @@ const jumped = await page.evaluate(async () => {
   await new Promise((r) => requestAnimationFrame(r));
   const before = app.viewport.zoom;
   const list = document.querySelector('.group-list');
-  list.value = String([...list.options].find((o) => o.textContent.includes('The lighthouse')).value);
+  list.value = [...list.options].find((o) => o.textContent.includes('The lighthouse')).value;
   list.dispatchEvent(new Event('change'));
   await new Promise((r) => requestAnimationFrame(r));
   return { before, after: app.viewport.zoom, selected: app.selection.size };
@@ -1449,7 +1449,7 @@ const groupsAfterReload = await page.evaluate(() => {
   };
 });
 check('a group name survives a reload', groupsAfterReload.names.includes('The lighthouse'), groupsAfterReload.names.join(', ') || 'none');
-check('and the Groups list is rebuilt from it', groupsAfterReload.options.some((t) => t.includes('The lighthouse')));
+check('and the Named list is rebuilt from it', groupsAfterReload.options.some((t) => t.includes('The lighthouse')));
 
 // Reported: "can highlight pieces, but clicking Name group does nothing". Highlighting
 // several pieces selects several *separate* groups, which the button used to refuse with
@@ -1482,6 +1482,44 @@ const multiName = await page.evaluate(async () => {
 check('several separate groups are collected into a tray', multiName.traysAfter === multiName.traysBefore + 1, `${multiName.traysBefore} -> ${multiName.traysAfter} trays`);
 check('and it offers a visible field to name it', multiName.offered === true);
 check('the status explains the difference', /tray/i.test(multiName.status), multiName.status.slice(0, 70));
+
+// The reason the unified list exists: a tray made this way used to be findable only in
+// the Trays dropdown, while the player went looking in Groups for the thing they had
+// just named. Whatever you name, it is in one list.
+const oneList = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const input = document.querySelector('.tray-rename');
+  input.value = 'Collected bits';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await new Promise((r) => setTimeout(r, 250));
+  const options = [...document.querySelector('.group-list').options].map((o) => o.textContent);
+  return {
+    options,
+    hasTray: options.some((t) => t.includes('Collected bits') && /tray/i.test(t)),
+    hasGroup: options.some((t) => /joined/.test(t)),
+  };
+});
+check('a tray named this way appears in the same list', oneList.hasTray === true, oneList.options.join(' | ').slice(0, 90));
+check('alongside the joined groups, each saying which it is', oneList.hasGroup === true);
+
+// Every toolbar control belongs to a labelled zone, and the label is text as well as
+// colour -- a tint six percent of people cannot separate is not a grouping.
+const zones = await page.evaluate(() => {
+  const bar = document.querySelector('.bar');
+  const zoned = [...bar.querySelectorAll('.group[data-zone]')];
+  const controls = [...bar.querySelectorAll('button, select, input')];
+  const orphans = controls.filter((c) => !c.closest('.group[data-zone]')).length;
+  const labels = zoned.map((g) => getComputedStyle(g, '::before').content);
+  return {
+    zones: zoned.length,
+    names: [...new Set(zoned.map((g) => g.dataset.zone))],
+    orphans,
+    labelled: labels.filter((c) => c && c !== 'none').length,
+  };
+});
+check('the toolbar is divided into labelled zones', zones.zones >= 6, zones.names.join(', '));
+check('every control belongs to one', zones.orphans === 0, `${zones.orphans} outside a zone`);
+check('and each zone is named in text, not colour alone', zones.labelled === zones.zones, `${zones.labelled} of ${zones.zones}`);
 
 // 15. Free-form rules: any arrangement that fills the frame.
 const rulesSet = await page.evaluate(async () => {

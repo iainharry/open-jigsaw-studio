@@ -350,6 +350,7 @@ export class App {
       <div class="ojs">
         <header class="bar">
           <strong class="brand">Open Jigsaw Studio</strong>
+          <span class="group" data-zone="Puzzle">
           <label class="field name-field" data-help="The puzzle's name. Click here and type to rename it; it shows in My puzzles.">Name
             <input class="title" type="text" placeholder="Untitled puzzle" title="Rename this puzzle" />
           </label>
@@ -361,13 +362,14 @@ export class App {
           <button class="btn" data-act="prepare" data-help="Crop, straighten and adjust the picture, then cut it into a new puzzle. Your original photo is never changed.">Prepare…</button>
           <button class="btn" data-act="new" data-help="Cut the same picture again into the number of pieces chosen above. Your current progress on it is replaced.">New puzzle</button>
           <button class="btn" data-act="shuffle" data-help="Break everything apart and scatter it again. The picture and piece count stay the same.">Shuffle</button>
-          <span class="group">
+          </span>
+          <span class="group" data-zone="View">
             <button class="btn zoom" data-act="zoom-out" data-help="Make pieces smaller so you can see more at once. Keyboard: −" title="Zoom out (−)">&minus;</button>
             <span class="zoom-readout" data-help="Current zoom, and how big one piece is on screen. It turns amber when pieces get too small to see comfortably." title="Zoom, and how big a piece is on screen">100%</span>
             <button class="btn zoom" data-act="zoom-in" data-help="Make pieces bigger. The number to the left shows how big a piece is on screen. Keyboard: +" title="Zoom in (+)">+</button>
             <button class="btn" data-act="fit-board" data-help="Zoom so the whole picture area fits the window. This is where a new puzzle starts. Keyboard: 0" title="Fit the picture area (0)">Fit board</button>
             <button class="btn" data-act="fit-all" data-help="Zoom out far enough to see every loose piece as well as the board. Keyboard: 9" title="Fit everything including loose pieces (9)">Fit all</button>
-          </span>
+          
           <label class="field" data-help="Show the finished picture beside or below the board so you can see what you are building. Drag the bar between the two to resize.">Reference
             <select class="ref-mode">
               <option value="right">Side</option>
@@ -375,8 +377,9 @@ export class App {
               <option value="off">Hidden</option>
             </select>
           </label>
+          </span>
           <span class="divider"></span>
-          <span class="group">
+          <span class="group" data-zone="Sort">
             <button class="btn" data-act="select-edges" data-help="Select every edge and corner piece. Press New tray straight after to gather them all in one place.">Edges</button>
             <button class="btn" data-act="colour-sort" data-help="Group the loose pieces by colour and step through the groups one at a time. Each group is selected for you; press New tray to keep it, or skip to the next.">Sort by colour</button>
             <button class="btn" data-act="new-tray" data-help="Put the selected pieces into a new tray. With nothing selected you get an empty tray to drag pieces into. Keyboard: T" title="Put the selected pieces in a new tray (T)">New tray</button>
@@ -384,7 +387,7 @@ export class App {
             <button class="btn tray-only" data-act="collapse-tray" data-help="Shrink the selected tray to a single bar, hiding its pieces so they stop cluttering the board. Press again to open it." title="Collapse or expand the selected tray">Collapse</button>
             <button class="btn tray-only" data-act="empty-tray" data-help="Remove the selected tray. Its pieces are tipped back onto the board, not deleted." title="Tip the tray out onto the board and remove it">Empty</button>
           </span>
-          <span class="colour-nav group" hidden>
+          <span class="colour-nav group" data-zone="Sort" hidden>
             <button class="btn zoom" data-act="colour-prev" data-help="Show the previous colour group.">&#9664;</button>
             <span class="swatch"></span>
             <span class="colour-label"></span>
@@ -397,7 +400,7 @@ export class App {
             <button class="btn" data-act="colour-done" data-help="Stop stepping through colour groups.">Done</button>
           </span>
           <span class="divider"></span>
-          <span class="group">
+          <span class="group" data-zone="Play">
             <button class="btn tool" data-act="tool" data-help="Move: dragging the background pans the board. Select: dragging the background lassoes pieces instead. On a PC, Shift and drag always lassoes." title="Drag the board to pan, or to rubber-band select (Shift+drag always selects)">Move</button>
             <label class="field" data-help="Start pieces at random quarter turns, so they must be turned as well as placed. Turning this off straightens everything again.">
               <input type="checkbox" class="rotate-on" /> Rotation
@@ -406,7 +409,7 @@ export class App {
             <button class="btn rot" data-act="rotr" data-help="Turn the selected pieces a quarter turn clockwise. Needs Rotation switched on. Keyboard: R" title="Rotate selection clockwise (R)">&#8635;</button>
           </span>
           <span class="divider"></span>
-          <span class="group">
+          <span class="group" data-zone="Assist">
             <label class="field" data-help="Show the finished picture faintly on the board, to lay pieces over. Drag left for no help at all; drag right to make it clearer.">Ghost
               <input type="range" class="ghost" min="0" max="45" step="1" value="0" />
             </label>
@@ -415,7 +418,7 @@ export class App {
             <button class="btn" data-act="edges-only" data-help="Hide every piece that is not part of the border, so you can build the frame without the rest in the way. Nothing is lost — switch it off to bring them back.">Edges only</button>
           </span>
           <span class="divider"></span>
-          <span class="group">
+          <span class="group" data-zone="Cut">
             <label class="field" data-help="Classic jigsaw pieces, or shape pieces \u2014 L's, T's, crosses and bars that tile the picture. Both interlock and snap the same way.">Cut
               <select class="cut">
                 <option value="classic">Classic</option>
@@ -465,12 +468,16 @@ export class App {
               </select>
             </label>
           </span>
+          <span class="group" data-zone="Organise">
           <button class="btn" data-act="name-group" data-help="Name the group of joined pieces you last touched, so you can find it again. Touch a piece, press this, and type. The name shows on the board and in the Groups list.">Name group</button>
-            <label class="field" data-help="Jump to a named group of joined pieces. Choosing one selects it and brings it into view.">Groups
+            <label class="field" data-help="Everything you have named — joined groups and trays alike. Choosing one brings it into view.">Named
               <select class="group-list"></select>
             </label>
+          </span>
+          <span class="group" data-zone="App">
             <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
+          </span>
           <span class="spacer"></span>
           <span class="status"></span>
         </header>
@@ -668,8 +675,10 @@ export class App {
     });
 
     this.els.groupList.addEventListener('change', () => {
-      const id = Number(this.els.groupList.value);
-      if (Number.isFinite(id) && id >= 0) this.goToGroup(id);
+      const value = this.els.groupList.value;
+      if (value.startsWith('c')) this.goToGroup(Number(value.slice(1)));
+      else if (value.startsWith('t')) this.jumpToTray(Number(value.slice(1)));
+      this.els.groupList.value = '';
     });
     this.els.pieces.addEventListener('change', () => void this.newPuzzle());
     for (const control of [
@@ -1129,12 +1138,15 @@ export class App {
   private fitBoard(): void {
     if (!this.session) return;
     const g = this.session.state.geometry;
-    this.viewport = fitTo(this.renderer.size, {
-      x: 0,
-      y: 0,
-      w: g.imageWidth,
-      h: g.imageHeight,
-    });
+    // 3% of breathing room rather than the 6% default. Fit-board is the view you *work*
+    // in, so the margin is dead space paid for in piece size on every puzzle — and
+    // section 12 exists because pieces were too small to see. The wider margin still
+    // suits `fitAll`, where the scatter ring needs the room.
+    this.viewport = fitTo(
+      this.renderer.size,
+      { x: 0, y: 0, w: g.imageWidth, h: g.imageHeight },
+      0.03,
+    );
     this.dirty = true;
   }
 
@@ -1666,24 +1678,43 @@ export class App {
   }
 
   /** Named groups, for the jump list. Rebuilt on demand rather than tracked. */
+  /**
+   * Everything you have named, groups and trays in one list.
+   *
+   * Reported: "I created Sample Group but Groups says none". It had become a *tray*,
+   * because several separate pieces were highlighted — correct behaviour, explained in
+   * the status line, and useless, because the thing you just named was then not in the
+   * list you look in. Whether a collection happens to be one joined assembly or a tray of
+   * loose pieces is the app's distinction, not the player's, and it should not decide
+   * which list they have to search. One list, each entry saying which it is.
+   */
   private refreshGroupList(): void {
     const select = this.els.groupList;
-    const named = this.session
-      ? [...this.session.state.clusters.values()].filter((c) => c.name)
-      : [];
+    const state = this.session?.state;
+    const groups = state ? [...state.clusters.values()].filter((c) => c.name) : [];
+    const trays = state ? [...state.trays.values()] : [];
+
     select.innerHTML = '';
+    const total = groups.length + trays.length;
     const head = document.createElement('option');
-    head.value = '-1';
-    head.textContent = named.length === 0 ? 'No named groups' : `Groups (${named.length})`;
+    head.value = '';
+    head.textContent = total === 0 ? 'Nothing named yet' : `Named (${total})`;
     select.append(head);
-    for (const cluster of named) {
+
+    for (const cluster of groups) {
       const opt = document.createElement('option');
-      opt.value = String(cluster.id);
-      opt.textContent = `${cluster.name} · ${cluster.pieces.length}`;
+      opt.value = `c${cluster.id}`;
+      opt.textContent = `${cluster.name} · ${cluster.pieces.length} joined`;
       select.append(opt);
     }
-    select.value = '-1';
-    select.disabled = named.length === 0;
+    for (const tray of trays) {
+      const opt = document.createElement('option');
+      opt.value = `t${tray.id}`;
+      opt.textContent = `${tray.name} · ${trayPieceCount(state!, tray)} in a tray`;
+      select.append(opt);
+    }
+    select.value = '';
+    select.disabled = total === 0;
   }
 
   /** Select a named group and bring it into view. */
@@ -1706,7 +1737,6 @@ export class App {
     );
     this.dirty = true;
     this.updateStatus();
-    this.els.groupList.value = '-1';
   }
 
   /** Which aids were switched on, for recording beside a finishing time. */
@@ -2122,6 +2152,9 @@ export class App {
   private refreshTrayUi(): void {
     const state = this.session?.state;
     const trays = state ? [...state.trays.values()] : [];
+    // The named list shows trays too, so it is rebuilt here rather than at all nine of
+    // this method's call sites -- which is exactly where one of them would be forgotten.
+    queueMicrotask(() => this.refreshGroupList());
 
     if (this.activeTray !== null && !state?.trays.has(this.activeTray)) this.activeTray = null;
     this.renderer.selectedTray = this.activeTray;

@@ -47,10 +47,13 @@ body {
 
 .bar {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 8px 12px;
+  /* Tight on purpose. Every pixel here comes off the board, and section 12 fixed a
+     500-piece puzzle opening at 28px per piece by *giving* the board room; the zone
+     tints must not quietly take it back. The smoke test asserts the 34px floor. */
+  padding: 5px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
@@ -770,4 +773,59 @@ body {
   font-size: 12.5px;
   line-height: 1.45;
   margin: 0;
+}
+
+/* --- Toolbar zones ----------------------------------------------------------
+   The toolbar has grown to four rows, and a wall of thirty buttons reads as one
+   undifferentiated list. Each group now carries the job it does, shown as a tint *and*
+   as a label — never colour alone, for the same reason the piece palette does not rely
+   on hue: a tint that six percent of people cannot separate is not a grouping. */
+/* Comes *before* the display rule for a reason. In M2 a `.library { display: flex }`
+   added after `[hidden]` silently overrode it and left an invisible overlay swallowing
+   every click in the app. The colour stepper is a hidden zone; same trap, guarded. */
+.group[data-zone][hidden] {
+  display: none !important;
+}
+
+.group[data-zone] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--zone) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--zone) 26%, transparent);
+}
+
+/* The label sits *beside* the controls, not above them.
+   Stacking it cost 13px a row, the toolbar wraps to four rows, and the fifty pixels that
+   took out of the board pushed a 500-piece puzzle below the 34px-per-piece floor set in
+   section 12 and dropped the bottom reference panel off the screen. Both were caught by
+   the smoke test, which is the only reason this is a design note and not a regression. */
+.group[data-zone]::before {
+  content: attr(data-zone);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  line-height: 1;
+  color: color-mix(in oklab, var(--zone) 78%, var(--text));
+  pointer-events: none;
+  flex: none;
+}
+
+/* Hues chosen well apart, and each is only ever a wash behind its controls -- the
+   buttons keep the theme's own contrast, which the tests measure. */
+.group[data-zone='Puzzle'] { --zone: #6aa9ff; }
+.group[data-zone='View'] { --zone: #63c9b0; }
+.group[data-zone='Sort'] { --zone: #e8b45f; }
+.group[data-zone='Organise'] { --zone: #d98cc4; }
+.group[data-zone='Play'] { --zone: #8f9bff; }
+.group[data-zone='Assist'] { --zone: #7fc45f; }
+.group[data-zone='Cut'] { --zone: #ff9d76; }
+.group[data-zone='App'] { --zone: #9aa5b4; }
+
+/* The dividers were doing this job badly; the zones do it properly. */
+.bar .divider {
+  display: none;
 }

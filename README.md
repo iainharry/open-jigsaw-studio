@@ -170,8 +170,9 @@ Touch a piece and press **Name group**. If you have highlighted several *separat
 rather than one joined assembly, the same button collects them into a tray and offers to
 name that instead — a name belongs to one joined group, while a tray is the right home for
 a handful of pieces that are not joined to each other. Type a name — "the lighthouse",
-"top left sky" — and it appears on the board above that group and in the **Groups** list
-in the toolbar. Choosing it from the list selects the group and brings it into view,
+"top left sky" — and it appears on the board above that group and in the **Named** list
+in the toolbar — which holds everything you have named, groups and trays alike, each
+saying which it is. Whatever you name, it is in that one list. Choosing it from the list selects the group and brings it into view,
 however far away it has drifted.
 
 The name is drawn at a fixed size on screen, so it stays readable when you zoom out to
@@ -198,6 +199,13 @@ complete. A colour each makes that impossible.
 The colours are chosen so that no two *touching* pieces are hard to tell apart, including
 for red-green and blue-yellow colour blindness — the palette varies brightness as well as
 hue, so it also reads in greyscale. This is checked by the tests rather than assumed.
+
+## Finding your way around the toolbar
+
+The toolbar is divided into labelled zones — **Puzzle**, **View**, **Sort**, **Play**,
+**Assist**, **Cut**, **Organise**, **App** — each with its own tint and its own name. The
+name is there as well as the colour on purpose: a tint alone is no use to someone who
+cannot separate those particular colours.
 
 ## Playing without a mouse
 
@@ -336,7 +344,7 @@ preparation, assistance levels, notes/difficulty/history, appearance, autosave a
 completes the original brief — a second cut that makes shape pieces, named groups, free-form solving, pentominoes and outlines, and keyboard play. Deliberately deferred: tags and search, which solve a problem
 a five-puzzle library does not have, and a TV/remote-control interface, which is a
 different input model rather than a layout change.
-`ARCHITECTURE.md` §25 lists what is deliberately not built.
+`ARCHITECTURE.md` §26 lists what is deliberately not built.
 
 ## Licence
 

@@ -1,8 +1,8 @@
 # Architecture and decision record
 
-Status of this document: covers M1 to M14 (engine, selection, rotation, library, trays,
+Status of this document: covers M1 to M15 (engine, selection, rotation, library, trays,
 colour sorting, shipping, image preparation, assistance levels, notes and history,
-appearance/autosave/sharing, the polyomino cut, accessible colours, named groups, free-form solving, deeper shape puzzles and keyboard play).
+appearance/autosave/sharing, the polyomino cut, accessible colours, named groups, free-form solving, deeper shape puzzles, keyboard play and toolbar zones).
 Update it as decisions change; do not let it drift.
 
 ## 1. Layers
@@ -946,7 +946,54 @@ belongs to is, is not the same as putting it where it can be seen**, and asserti
 something is displayed is not asserting that it is visible. Both naming checks now measure
 the field's rectangle against the window.
 
-## 25. Known limitations after M2
+## 25. One list of named things, and toolbar zones
+
+### "I created Sample Group but Groups says none"
+
+It had become a *tray*. Several separate pieces were highlighted, so Name group did the
+thing the previous fix taught it to do — collect them into a tray — explained it in the
+status line, and left the thing just named absent from the list the player then searched.
+Correct behaviour, correctly explained, and useless.
+
+Whether a collection happens to be one joined assembly or a tray of loose pieces is the
+*app's* distinction, not the player's, and it should not decide which dropdown they have
+to hunt in. The Groups control is now **Named**, and lists both, each entry saying which
+it is: "The lighthouse · 4 joined", "Collected bits · 6 in a tray". Choosing either brings
+it into view.
+
+The list is rebuilt inside `refreshTrayUi()` rather than at that method's nine call sites,
+because a list kept in step from nine places is a list that will fall out of step from the
+tenth.
+
+### Toolbar zones
+
+The toolbar had grown to thirty-odd controls across four rows and read as one
+undifferentiated wall. Each group now carries the job it does as a `data-zone`, shown as a
+tint **and** as a text label. Never colour alone — a tint that six percent of people
+cannot separate is not a grouping, which is the same argument the piece palette lost and
+had to be rebuilt around.
+
+Two things this cost, both caught by the smoke test rather than by looking:
+
+- Stacking the label above its controls added thirteen pixels a row. Across four rows that
+  took fifty pixels off the board, which dropped the **bottom reference panel off screen**
+  and pushed a 500-piece puzzle to **28px per piece** — undoing section 12 exactly. The
+  label moved inline.
+- A vertical label was worse: "ORGANISE" rotated is forty-five pixels tall, taller than
+  the buttons beside it.
+
+Even inline it was a pixel short of the 34px floor, and the fix was not to weaken the
+assertion. `fitBoard` now reserves 3% margin instead of 6%: fit-board is the view you
+*work* in, so that margin is dead space paid for in piece size on every puzzle, while
+`fitAll` keeps the wider one because the scatter ring needs the room. 35px, and better on
+every viewport rather than tuned to the test's.
+
+The colour-sort stepper is a hidden zone, which walked straight back into the M2 trap: a
+`display` rule added after `[hidden]` silently overrides it, which is how an invisible
+overlay once swallowed every click in the app. `.group[data-zone][hidden]` is declared
+first and marked important.
+
+## 26. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.
