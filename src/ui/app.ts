@@ -48,12 +48,24 @@ import {
   trayMetrics,
   trayPieceCount,
   DEFAULT_SETTINGS,
+  analyseTiling,
+  tile,
+  silhouetteMask,
+  CHALLENGE_CELL,
+  challengeName,
+  challengeUrl,
+  decodeChallenge,
+  encodeChallenge,
+  type Challenge,
+  type PieceGeometry,
+  type Point,
   type GeometryOptions,
   type PuzzleState,
   type Viewport,
 } from '../engine/index.js';
 import { PointerInput, type Tool } from '../input/pointer.js';
 import { PrepareView } from './prepare.js';
+import { Playtest } from './playtest.js';
 import { renderEdited } from '../render/applyEdit.js';
 import { Renderer } from '../render/renderer.js';
 import { makeColourBoard } from '../render/colourBoard.js';
@@ -138,6 +150,22 @@ interface Session {
   edit: ImageEdit;
 }
 
+/**
+ * A short, human name for a control, for the playtest log.
+ *
+ * The action attribute where there is one, the label text otherwise. Deliberately never
+ * an id or a selector: the log is meant to be read by the person handing it over, and
+ * "Name group" tells them what they are giving away where `[data-act="name-group"]` does
+ * not.
+ */
+function controlName(el: Element): string {
+  const act = el.getAttribute('data-act');
+  if (act) return act;
+  const label = el.closest('label');
+  const text = (label?.childNodes[0]?.textContent ?? el.textContent ?? '').trim();
+  return text.slice(0, 32) || el.tagName.toLowerCase();
+}
+
 export class App {
   private readonly root: HTMLElement;
   private canvas!: HTMLCanvasElement;
@@ -202,7 +230,16 @@ export class App {
     setAutosave: HTMLSelectElement;
     setHaptics: HTMLInputElement;
     setNote: HTMLElement;
+    setPlaytest: HTMLInputElement;
+    ptNote: HTMLElement;
+    ptActions: HTMLElement;
     edgesOnly: HTMLButtonElement;
+    challenge: HTMLElement;
+    chCode: HTMLInputElement;
+    chLink: HTMLElement;
+    chRating: HTMLElement;
+    chOpen: HTMLInputElement;
+    chNote: HTMLElement;
   };
 
   /** Folder that receives a .jigsaw copy on every save, if one has been chosen. */
@@ -221,6 +258,9 @@ export class App {
    * help reachable by touch without shipping a separate manual.
    */
   private helpMode = false;
+
+  /** Off unless a tester deliberately switches it on. See `playtest.ts`. */
+  private readonly playtest = new Playtest();
   private tipTimer: number | null = null;
 
   /** Tray the toolbar acts on. Set by tapping a tray or creating one. */
@@ -270,6 +310,7 @@ export class App {
       // Free-form solving replaces the merge rule with a snap-to-board rule.
       releaseRule: (ids) => this.releaseFreeform(ids),
       onGrab: (pieceId) => {
+        this.playtest.sawActivity();
         this.hintPieceId = pieceId;
         this.refreshHints();
         this.updateStatus();
@@ -281,10 +322,12 @@ export class App {
         if (this.freeform) {
           this.buzz();
           void this.save();
+          this.playtest.sawProgress('a piece fitted the board');
         }
         if (result.merges > 0) {
           this.buzz();
           void this.save();
+          this.playtest.sawProgress('pieces joined', `${result.merges}`);
           // A merge can change which groups are named: mergeClusters() lets a name
           // survive absorbing an unnamed group, and two named groups joining leaves one.
           this.refreshGroupList();
@@ -475,6 +518,7 @@ export class App {
             </label>
           </span>
           <span class="group" data-zone="App">
+            <button class="btn" data-act="challenge" data-help="Share this shape puzzle as a short code, or open somebody else's. Everyone using the code gets the identical board, because the code *is* the puzzle — nothing is uploaded anywhere.">Challenge…</button>
             <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           </span>
@@ -519,6 +563,15 @@ export class App {
             <label class="set-row">Buzz when a piece lands
               <input type="checkbox" class="set-haptics" />
             </label>
+            <hr class="ch-rule" />
+            <label class="set-row" data-help="For watching someone try the app. Records which controls were pressed, which were asked about in help mode, and when somebody was working with nothing landing. It never leaves this device — you save it to a file and hand it over, or you do not.">Record a playtest
+              <input type="checkbox" class="set-playtest" />
+            </label>
+            <p class="set-note pt-note"></p>
+            <div class="ch-actions pt-actions" hidden>
+              <button class="btn" data-act="save-playtest">Save the log…</button>
+              <button class="btn" data-act="clear-playtest">Clear it</button>
+            </div>
             <p class="set-note"></p>
           </div>
         </div>
@@ -534,6 +587,33 @@ export class App {
             </div>
             <p class="lib-note"></p>
             <div class="lib-list"></div>
+          </div>
+        </div>
+        <div class="challenge" hidden>
+          <div class="set-panel">
+            <div class="set-head"><strong>Challenge code</strong>
+              <button class="btn" data-act="close-challenge">Close</button>
+            </div>
+            <p class="ch-explain">A shape puzzle with no photo is completely described by its code, so
+              the code is all anyone needs to play the identical board. Nothing is uploaded and no
+              account is involved — the part after the # never leaves the browser.</p>
+            <label class="set-row">This puzzle
+              <input class="ch-code" type="text" readonly />
+            </label>
+            <p class="ch-link"></p>
+            <p class="ch-rating"></p>
+            <div class="ch-actions">
+              <button class="btn" data-act="copy-challenge">Copy link</button>
+              <button class="btn" data-act="print-challenge" data-help="A page you can print and cut out: the outline at true scale and every piece beside it, so the same puzzle can be solved on a table with scissors.">Print sheet…</button>
+            </div>
+            <hr class="ch-rule" />
+            <label class="set-row">Open a code
+              <input class="ch-open" type="text" placeholder="1-k3j9x-6x8-pd5fa-7" maxlength="60" />
+            </label>
+            <div class="ch-actions">
+              <button class="btn" data-act="open-challenge">Open it</button>
+            </div>
+            <p class="ch-note"></p>
           </div>
         </div>
       </div>`;
@@ -583,9 +663,36 @@ export class App {
       setAutosave: q<HTMLSelectElement>('.set-autosave'),
       setHaptics: q<HTMLInputElement>('.set-haptics'),
       setNote: q<HTMLElement>('.set-note'),
+      setPlaytest: q<HTMLInputElement>('.set-playtest'),
+      ptNote: q<HTMLElement>('.pt-note'),
+      ptActions: q<HTMLElement>('.pt-actions'),
       edgesOnly: q<HTMLButtonElement>('[data-act="edges-only"]'),
+      challenge: q<HTMLElement>('.challenge'),
+      chCode: q<HTMLInputElement>('.ch-code'),
+      chLink: q<HTMLElement>('.ch-link'),
+      chRating: q<HTMLElement>('.ch-rating'),
+      chOpen: q<HTMLInputElement>('.ch-open'),
+      chNote: q<HTMLElement>('.ch-note'),
     };
     this.setupHelp();
+
+    /**
+     * A menu opened and closed without a choice.
+     *
+     * The single most useful signal in the log and the least obvious one to capture:
+     * somebody went looking in the Outline menu for the piece size, found it was not
+     * there, and closed it again. Nothing happened, so nothing else in the app notices.
+     */
+    for (const select of this.root.querySelectorAll('select')) {
+      let opened = '';
+      select.addEventListener('focus', () => {
+        opened = select.value;
+      });
+      select.addEventListener('blur', () => {
+        if (opened !== '' && select.value === opened) this.playtest.add('menu', controlName(select));
+        opened = '';
+      });
+    }
 
     for (const n of PIECE_CHOICES) {
       const opt = document.createElement('option');
@@ -597,6 +704,7 @@ export class App {
 
     this.root.addEventListener('click', (e) => {
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
+      if (act) this.playtest.add('press', act);
       if (act === 'new') void this.newPuzzle();
       else if (act === 'hints') this.toggleHints();
       else if (act === 'hint-find') this.findHints();
@@ -611,8 +719,21 @@ export class App {
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
       else if (act === 'name-group') this.nameSelectedGroup();
-      else if (act === 'settings') this.els.settings.hidden = false;
+      else if (act === 'settings') {
+        this.updatePlaytestUi();
+        this.els.settings.hidden = false;
+      }
       else if (act === 'close-settings') this.els.settings.hidden = true;
+      else if (act === 'challenge') this.openChallengePanel();
+      else if (act === 'close-challenge') this.els.challenge.hidden = true;
+      else if (act === 'copy-challenge') void this.copyChallenge();
+      else if (act === 'open-challenge') void this.openTypedChallenge();
+      else if (act === 'print-challenge') this.printChallengeSheet();
+      else if (act === 'save-playtest') this.savePlaytestLog();
+      else if (act === 'clear-playtest') {
+        this.playtest.clear();
+        this.updatePlaytestUi();
+      }
       else if (act === 'backup-folder') void this.chooseBackupFolder();
       else if (act === 'help') this.setHelpMode(!this.helpMode);
       else if (act === 'select-edges') this.selectEdges();
@@ -752,15 +873,43 @@ export class App {
   // --- Boot and puzzle lifecycle -------------------------------------------
 
   private async boot(): Promise<void> {
+    // A challenge in the address beats anything saved: the person followed a link *to*
+    // this board, and restoring last night's puzzle instead would look like the link
+    // simply did not work.
+    const linked = decodeChallenge(location.hash);
+    if (linked) {
+      try {
+        await this.startChallenge(linked);
+        return;
+      } catch (err) {
+        this.setStatus(`That challenge link could not be opened: ${(err as Error).message}`);
+      }
+    }
+    // Something is in the address but it is not a code. Silence would look identical to a
+    // working link that produced the wrong puzzle, so it has to be said -- and said
+    // *after* the fallback puzzle loads, because starting a puzzle ends by reporting its
+    // piece count and would otherwise wipe the message off the bar. That is the same
+    // overwrite that made the hint messages look broken in M9.
+    const badLink = !linked && location.hash.length > 1;
+
+    const complain = (): void => {
+      if (!badLink) return;
+      this.setStatus(
+        'The code in that link is not valid — most often a mistyped character. ' +
+          'Nothing was opened from it; this is your own puzzle.',
+      );
+    };
+
     const lastId = getLastOpened();
     if (lastId) {
       const record = await getPuzzle(lastId).catch(() => undefined);
       if (record) {
         const restored = await this.openRecord(record).catch(() => false);
-        if (restored) return;
+        if (restored) return complain();
       }
     }
     await this.useDemoImage();
+    complain();
   }
 
   private async useDemoImage(): Promise<void> {
@@ -865,7 +1014,19 @@ export class App {
   ): Promise<void> {
     const image = await this.deriveImage(original, edit);
     const requested = Number(this.els.pieces.value);
-    const limits = pieceCountLimits(image.width, image.height);
+    const colours = this.els.pictureMode.value === 'colours';
+    /**
+     * How many pieces this picture can carry.
+     *
+     * The cap is about resolution: past it a piece is more tab than picture. A puzzle
+     * with no picture has no such ceiling — there is no detail to lose — so refusing a
+     * hundred pieces there because the *discarded* photograph was small would be
+     * enforcing a constraint that no longer exists. The remaining limit is the
+     * performance one, which the piece-count menu already tops out below.
+     */
+    const limits = colours
+      ? { comfortable: Infinity, maximum: Infinity }
+      : pieceCountLimits(image.width, image.height);
     // Only the hard maximum is enforced. Going past `comfortable` is the player's call.
     const target = Math.min(requested, limits.maximum);
     const seed = randomSeed();
@@ -881,8 +1042,26 @@ export class App {
     const cellTarget = Math.min(shapes ? target * targetCells : target, limits.maximum);
     const { rows, cols } = chooseGrid(image.width, image.height, cellTarget);
 
+    /**
+     * The canvas the pieces are cut against.
+     *
+     * For a photograph this is the photograph: the cut has to cover it, whatever shape it
+     * is, so cells come out slightly oblong on anything that is not 4:3 to the grid. Fine
+     * — the picture is the point.
+     *
+     * For a shape puzzle with no picture there is nothing to cover, and the oblong cell
+     * was doing real damage: an L cut on a 1400x900 canvas at 13x19 is stretched, and two
+     * people opening the same challenge code on differently shaped windows would get
+     * visibly different boards from the same code. Square cells fix both — the shapes are
+     * the shapes they are named after, and the code reproduces exactly what its author
+     * saw, which is the only promise the code makes.
+     */
+    const square = shapes && colours;
+    const cutW = square ? cols * CHALLENGE_CELL : image.width;
+    const cutH = square ? rows * CHALLENGE_CELL : image.height;
+
     const geometry = shapes
-      ? generatePolyominoGeometry(seed, rows, cols, image.width, image.height, {
+      ? generatePolyominoGeometry(seed, rows, cols, cutW, cutH, {
           ...GEOMETRY_OPTIONS,
           targetCells,
           flatEdges,
@@ -894,23 +1073,20 @@ export class App {
             | 'cross'
             | 'frame',
         })
-      : generateGeometry(seed, rows, cols, image.width, image.height, GEOMETRY_OPTIONS);
+      : generateGeometry(seed, rows, cols, cutW, cutH, GEOMETRY_OPTIONS);
     const state = stateFromGeometry(geometry, {
       ...DEFAULT_SETTINGS,
       rotationEnabled: this.els.rotateOn.checked,
     });
-    scatter(state, seed, this.scatterArea(image.width, image.height), {
-      avoid: { x: 0, y: 0, w: image.width, h: image.height },
+    scatter(state, seed, this.scatterArea(cutW, cutH), {
+      avoid: { x: 0, y: 0, w: cutW, h: cutH },
     });
     this.clearSelection();
 
     // A picture-free puzzle is not a special rendering mode: piece outlines tile the
     // picture exactly, so filling each one with its own colour produces an image the
     // renderer, reference panel, thumbnails and ghost all take unchanged.
-    const colours = this.els.pictureMode.value === 'colours';
-    const shown: CanvasImageSource = colours
-      ? makeColourBoard(state.geometry, image.width, image.height)
-      : image;
+    const shown: CanvasImageSource = colours ? makeColourBoard(state.geometry, cutW, cutH) : image;
     this.shown = shown;
 
     const record: PuzzleRecord = {
@@ -926,7 +1102,7 @@ export class App {
       lastPlayed: Date.now(),
       completedAt: null,
       progress: 0,
-      thumbnail: makeThumbnail(shown, image.width, image.height),
+      thumbnail: makeThumbnail(shown, cutW, cutH),
       edit: isUneditedImage(edit) ? null : edit,
       picture: colours ? 'colours' : 'photo',
       rules: this.els.rules.value === 'anyfit' ? 'anyfit' : 'match',
@@ -937,7 +1113,7 @@ export class App {
     this.pieceColours = null;
     this.endColourSort();
     this.renderer.invalidateGeometry();
-    this.renderer.setImage(shown, image.width, image.height);
+    this.renderer.setImage(shown, cutW, cutH);
     this.els.title.value = title;
     this.activeTray = null;
     this.reapplyAssistance();
@@ -951,8 +1127,18 @@ export class App {
     await this.save();
 
     const made = state.geometry.pieces.length;
-    const edge = Math.round(pieceEdgePixels(image.width, image.height, made));
-    if (shapes && made < requested * 0.9) {
+    const edge = Math.round(pieceEdgePixels(cutW, cutH, made));
+    // Every one of these lines is about how much *picture* a piece is carrying, so none
+    // of them applies without one: a colours-only board is drawn at whatever size it is
+    // played at, and quoting the resolution of the photograph it does not use was simply
+    // reporting a constraint that had been removed two lines earlier.
+    if (colours) {
+      this.setStatus(
+        shapes
+          ? `${made} shape pieces of about ${targetCells} squares each, in colours rather than a picture.`
+          : `${made} pieces, in colours rather than a picture.`,
+      );
+    } else if (shapes && made < requested * 0.9) {
       this.setStatus(
         `${made} shape pieces of about ${targetCells} squares each, roughly ${edge}px across. ` +
           `A ${image.width}×${image.height} image cannot carry ${requested} pieces this size — ` +
@@ -973,6 +1159,427 @@ export class App {
     } else {
       this.setStatus(`${made} pieces, about ${edge}px each.`);
     }
+  }
+
+  /**
+   * The code for the puzzle that is open, or null if it cannot be one.
+   *
+   * Derived rather than stored, so it cannot drift from the board it names — the same
+   * reasoning that keeps geometry derived from the seed. A puzzle cut from a photograph
+   * has no code, and this returns null rather than a code for a puzzle that would come
+   * out differently, which is the only failure worth caring about here.
+   */
+  private currentChallenge(): Challenge | null {
+    const session = this.session;
+    if (!session) return null;
+    const g = session.state.geometry;
+    const options = g.polyominoOptions;
+    if (g.cut !== 'polyomino' || !options) return null;
+    if (session.record.picture !== 'colours') return null;
+
+    const shapeSet = options['shapeSet'];
+    const silhouette = options['silhouette'];
+    const targetCells = options['targetCells'];
+    if (typeof shapeSet !== 'string' || typeof silhouette !== 'string') return null;
+    return {
+      seed: g.seed,
+      rows: g.rows,
+      cols: g.cols,
+      shapeSet: shapeSet as Challenge['shapeSet'],
+      silhouette: silhouette as Challenge['silhouette'],
+      targetCells: typeof targetCells === 'number' ? targetCells : 4,
+      flatEdges: options['flatEdges'] === true,
+      rules: session.record.rules === 'anyfit' ? 'anyfit' : 'match',
+      rotate: session.state.settings.rotationEnabled,
+    };
+  }
+
+  private openChallengePanel(): void {
+    const challenge = this.currentChallenge();
+    this.els.challenge.hidden = false;
+    this.els.chNote.textContent = '';
+
+    if (!challenge) {
+      this.els.chCode.value = '';
+      // Saying what *would* make it shareable, rather than only that it is not: the
+      // settings involved are three menus apart and nobody should have to guess which.
+      this.els.chLink.textContent =
+        'This puzzle has a photograph in it, so it has no code — a picture cannot travel in a link. ' +
+        'Set Cut to Shapes and Picture to Colours only, press New puzzle, and this fills in.';
+      this.els.chRating.textContent = '';
+      return;
+    }
+
+    const code = encodeChallenge(challenge);
+    this.els.chCode.value = code;
+    this.els.chLink.textContent = challengeUrl(location.href, challenge);
+    this.showChallengeRating(challenge);
+  }
+
+  /**
+   * Measure the open puzzle and say how hard it is.
+   *
+   * Deliberately not measured when the puzzle is created: the search is hundreds of
+   * milliseconds on a large board, and paying that on every cut — for a number almost
+   * nobody looks at — would make the app feel slower at the moment it should feel
+   * fastest. It is measured when someone asks.
+   */
+  private showChallengeRating(challenge: Challenge): void {
+    this.els.chRating.textContent = 'Working out how hard this one is…';
+    // A frame's grace so the panel paints before the search blocks the thread. The
+    // alternative is a worker, which for a few hundred milliseconds once per press is
+    // more machinery than the problem deserves.
+    requestAnimationFrame(() => {
+      const current = this.currentChallenge();
+      if (!current || encodeChallenge(current) !== encodeChallenge(challenge)) return;
+      const tiling = tile(challenge.seed, challenge.rows, challenge.cols, {
+        targetCells: challenge.targetCells,
+        shapeSet: challenge.shapeSet,
+        silhouette: challenge.silhouette,
+      });
+      const report = analyseTiling(tiling, challenge.silhouette);
+      this.els.chRating.textContent = `${tiling.pieces.length} pieces · ${report.summary}`;
+    });
+  }
+
+  private async copyChallenge(): Promise<void> {
+    const challenge = this.currentChallenge();
+    if (!challenge) return;
+    const url = challengeUrl(location.href, challenge);
+    try {
+      await navigator.clipboard.writeText(url);
+      this.els.chNote.textContent = 'Link copied.';
+    } catch {
+      // Clipboard access is refused in plenty of ordinary situations — an insecure
+      // origin, a browser setting, a page that has lost focus. Selecting the text is a
+      // worse experience than copying it, and a far better one than a dead button.
+      this.els.chCode.value = url;
+      this.els.chCode.select();
+      this.els.chNote.textContent = 'Copying was blocked — the link is selected above, so copy it by hand.';
+    }
+  }
+
+  private async openTypedChallenge(): Promise<void> {
+    const text = this.els.chOpen.value;
+    if (!text.trim()) {
+      this.els.chNote.textContent = 'Paste a code or a link first.';
+      return;
+    }
+    const challenge = decodeChallenge(text);
+    if (!challenge) {
+      this.els.chNote.textContent =
+        'That code is not valid — most often a mistyped character. Codes look like 1-k3j9x-6x8-pd5fa-7.';
+      return;
+    }
+    this.els.challenge.hidden = true;
+    await this.startChallenge(challenge);
+  }
+
+  /**
+   * Build the exact board a code describes.
+   *
+   * This does not go through `startPuzzle`, and the reason is the whole point of the
+   * feature: `startPuzzle` chooses a grid from a piece count and an image's proportions,
+   * so two people on different screens would get different boards from the same
+   * settings. Here the grid comes from the code and the canvas is invented from the grid.
+   *
+   * The colour board is then stored as though it were an imported picture, so the puzzle
+   * reaches the library, the thumbnails, the reference panel and the save format with no
+   * special case anywhere. A challenge puzzle is an ordinary puzzle that happens to have
+   * been drawn rather than photographed.
+   */
+  private async startChallenge(challenge: Challenge): Promise<void> {
+    const width = challenge.cols * CHALLENGE_CELL;
+    const height = challenge.rows * CHALLENGE_CELL;
+    const geometry = generatePolyominoGeometry(
+      challenge.seed,
+      challenge.rows,
+      challenge.cols,
+      width,
+      height,
+      {
+        ...GEOMETRY_OPTIONS,
+        targetCells: challenge.targetCells,
+        flatEdges: challenge.flatEdges,
+        shapeSet: challenge.shapeSet,
+        silhouette: challenge.silhouette,
+      },
+    );
+
+    const board = makeColourBoard(geometry, width, height) as HTMLCanvasElement;
+    const blob = await canvasToBlob(board);
+    const hash = await hashBlob(blob);
+    const name = challengeName(challenge, geometry.pieces.length);
+    const meta: StoredImage = {
+      hash,
+      blob,
+      width,
+      height,
+      name,
+      addedAt: Date.now(),
+    };
+    try {
+      await putImage(meta);
+    } catch (err) {
+      this.setStatus(`The challenge could not be saved: ${(err as Error).message}`);
+      return;
+    }
+
+    const bitmap = await createImageBitmap(blob);
+    const state = stateFromGeometry(geometry, {
+      ...DEFAULT_SETTINGS,
+      rotationEnabled: challenge.rotate,
+    });
+    scatter(state, challenge.seed, this.scatterArea(width, height), {
+      avoid: { x: 0, y: 0, w: width, h: height },
+    });
+
+    this.closeSession();
+    this.clearSelection();
+    this.shown = bitmap;
+
+    const record: PuzzleRecord = {
+      id: `p_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
+      title: name,
+      imageHash: hash,
+      saved: null,
+      pieceCount: geometry.pieces.length,
+      createdAt: Date.now(),
+      lastPlayed: Date.now(),
+      completedAt: null,
+      progress: 0,
+      thumbnail: makeThumbnail(bitmap, width, height),
+      edit: null,
+      picture: 'colours',
+      rules: challenge.rules,
+    };
+
+    this.session = { record, state, image: bitmap, original: bitmap, imageMeta: meta, edit: DEFAULT_EDIT };
+    this.pieceColours = null;
+    this.endColourSort();
+    this.renderer.invalidateGeometry();
+    this.renderer.setImage(bitmap, width, height);
+    this.els.title.value = name;
+    this.activeTray = null;
+
+    // The menus are set to match, so the code and the controls never disagree — and
+    // pressing New puzzle afterwards cuts something recognisably like what you were
+    // just playing rather than reverting to whatever was set before.
+    this.els.cut.value = 'shapes';
+    this.els.pictureMode.value = 'colours';
+    this.els.polySize.value = String(challenge.targetCells);
+    this.els.shapeSet.value = challenge.shapeSet;
+    this.els.silhouette.value = challenge.silhouette;
+    this.els.polyEdges.value = challenge.flatEdges ? 'flat' : 'tabs';
+    this.els.rules.value = challenge.rules;
+    this.els.rotateOn.checked = challenge.rotate;
+
+    this.reapplyAssistance();
+    this.updateRotationUi();
+    this.updateCutUi();
+    this.refreshTrayUi();
+    this.refreshGroupList();
+    this.drawReference();
+    this.fitBoard();
+    this.playingSince = performance.now();
+    setLastOpened(record.id);
+    await this.save();
+    this.setStatus(`${name} — ${geometry.pieces.length} pieces from the code ${encodeChallenge(challenge)}.`);
+  }
+
+  /**
+   * A sheet to print, cut up and solve on a table.
+   *
+   * Worth building rather than dismissing as a novelty: a shape puzzle is a spatial
+   * reasoning exercise, and the version of it that works in a room full of people
+   * involves scissors, not thirty tablets. The outline and the pieces print at the same
+   * millimetre scale, so a cut-out piece really does fit the printed frame — a sheet
+   * where they did not match would be worse than none.
+   *
+   * Printed from an iframe rather than a new window. A window is blocked often enough to
+   * be unreliable, and when it is blocked the failure is silent.
+   */
+  private printChallengeSheet(): void {
+    const challenge = this.currentChallenge();
+    if (!challenge) return;
+    const html = this.challengeSheetHtml(challenge);
+
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    if (!doc || !frame.contentWindow) {
+      frame.remove();
+      this.els.chNote.textContent = 'The printable sheet could not be prepared in this browser.';
+      return;
+    }
+    doc.open();
+    doc.write(html);
+    doc.close();
+    const win = frame.contentWindow;
+    // The frame has to outlive the print dialog, which is modal in some browsers and not
+    // in others; a fixed delay after printing is the only portable point to clean up.
+    win.focus();
+    win.print();
+    setTimeout(() => frame.remove(), 60_000);
+    this.els.chNote.textContent = 'Sheet sent to your printer dialog.';
+  }
+
+  /** The sheet itself. Kept separate so it can be produced and inspected without printing. */
+  private challengeSheetHtml(challenge: Challenge): string {
+    const geometry = generatePolyominoGeometry(
+      challenge.seed,
+      challenge.rows,
+      challenge.cols,
+      challenge.cols * CHALLENGE_CELL,
+      challenge.rows * CHALLENGE_CELL,
+      {
+        ...GEOMETRY_OPTIONS,
+        targetCells: challenge.targetCells,
+        // Always flat on paper. A printed tab is a fiddly two-millimetre spike that tears
+        // off the moment it is cut, and it carries no information a straight edge does
+        // not -- the shapes are the puzzle.
+        flatEdges: true,
+        shapeSet: challenge.shapeSet,
+        silhouette: challenge.silhouette,
+      },
+    );
+
+    // Millimetres per cell, chosen so the largest sensible board still fits an A4 page
+    // with room for the pieces beside it.
+    const mm = Math.max(6, Math.min(16, Math.floor(170 / Math.max(challenge.rows, challenge.cols))));
+    const scale = mm / CHALLENGE_CELL;
+
+    const path = (piece: PieceGeometry, dx: number, dy: number): string => {
+      const out: string[] = [];
+      const px = (p: Point): string =>
+        `${((p.x + piece.bounds.x) * scale + dx).toFixed(2)} ${((p.y + piece.bounds.y) * scale + dy).toFixed(2)}`;
+      for (const cmd of piece.outline) {
+        if (cmd.kind === 'move') out.push(`M ${px(cmd.to)}`);
+        else if (cmd.kind === 'cubic') out.push(`C ${px(cmd.c1)} ${px(cmd.c2)} ${px(cmd.to)}`);
+        else out.push('Z');
+      }
+      return out.join(' ');
+    };
+
+    const boardW = challenge.cols * mm;
+    const boardH = challenge.rows * mm;
+
+    /**
+     * The frame is the silhouette's edge, and *only* its edge.
+     *
+     * The first version of this drew every piece's outline into the frame, which looks
+     * like an outline and is in fact the answer: hand that to a class and there is
+     * nothing left to solve. It survived four assertions — two drawings, every piece
+     * present, both in millimetres — because all of them were true. The same shape of
+     * mistake as the hints that were marked but invisible: the test checked that
+     * something was drawn, not what it showed.
+     *
+     * Built from the mask rather than from the pieces, so it cannot pick the cut up
+     * again: a cell contributes an edge only where its neighbour is outside the
+     * silhouette. Holes — the inside of a frame outline — come out right for free.
+     */
+    const mask = silhouetteMask(challenge.rows, challenge.cols, challenge.silhouette);
+    const inside = (r: number, c: number): boolean =>
+      r >= 0 &&
+      c >= 0 &&
+      r < challenge.rows &&
+      c < challenge.cols &&
+      mask[r * challenge.cols + c] === 1;
+    const border: string[] = [];
+    const grid: string[] = [];
+    for (let r = 0; r < challenge.rows; r++) {
+      for (let c = 0; c < challenge.cols; c++) {
+        if (!inside(r, c)) continue;
+        const x = c * mm;
+        const y = r * mm;
+        if (!inside(r - 1, c)) border.push(`M ${x} ${y} L ${x + mm} ${y}`);
+        if (!inside(r + 1, c)) border.push(`M ${x} ${y + mm} L ${x + mm} ${y + mm}`);
+        if (!inside(r, c - 1)) border.push(`M ${x} ${y} L ${x} ${y + mm}`);
+        if (!inside(r, c + 1)) border.push(`M ${x + mm} ${y} L ${x + mm} ${y + mm}`);
+        // A faint square grid, which gives away nothing — the piece sheet already shows
+        // the cell size — and is the difference between a frame you can work in and an
+        // empty diamond you have to eyeball.
+        else grid.push(`M ${x + mm} ${y} L ${x + mm} ${y + mm}`);
+        if (inside(r + 1, c)) grid.push(`M ${x} ${y + mm} L ${x + mm} ${y + mm}`);
+      }
+    }
+
+    // Pieces laid out in rows, each in its own box, so they can be cut apart along the
+    // gaps rather than along a shared line -- a shared line means one slip ruins two.
+    const gap = 3;
+    const sheetW = 180;
+    let x = 0;
+    let y = 0;
+    let rowH = 0;
+    const laid: string[] = [];
+    for (const piece of geometry.pieces) {
+      const w = piece.bounds.w * scale;
+      const h = piece.bounds.h * scale;
+      if (x + w > sheetW) {
+        x = 0;
+        y += rowH + gap;
+        rowH = 0;
+      }
+      laid.push(`<path d="${path(piece, x - piece.bounds.x * scale, y - piece.bounds.y * scale)}" />`);
+      x += w + gap;
+      rowH = Math.max(rowH, h);
+    }
+    const piecesH = y + rowH;
+
+    const code = encodeChallenge(challenge);
+    const name = challengeName(challenge, geometry.pieces.length);
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${name}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  body { font: 11px/1.45 system-ui, sans-serif; color: #000; margin: 0; }
+  h1 { font-size: 15px; margin: 0 0 2mm; }
+  p { margin: 0 0 4mm; }
+  code { font-size: 12px; }
+  h2 { font-size: 12px; margin: 6mm 0 2mm; }
+  svg { display: block; }
+  path { fill: none; stroke: #000; stroke-width: 0.3mm; }
+  .edge { stroke-width: 0.6mm; }
+  .grid { stroke: #bbb; stroke-width: 0.15mm; }
+</style></head><body>
+<h1>${name}</h1>
+<p>Fill the outline with every piece. Pieces may be turned, not flipped over.
+Play the same puzzle on screen at <code>${code}</code>.</p>
+<h2>The outline — cut pieces fit this exactly</h2>
+<svg width="${boardW}mm" height="${boardH}mm" viewBox="0 0 ${boardW} ${boardH}"><path class="grid" d="${grid.join(' ')}" /><path class="edge" d="${border.join(' ')}" /></svg>
+<h2>The pieces — cut these out</h2>
+<svg width="${sheetW}mm" height="${piecesH}mm" viewBox="0 0 ${sheetW} ${piecesH}">${laid.join('')}</svg>
+</body></html>`;
+  }
+
+  private updatePlaytestUi(): void {
+    const on = this.playtest.recording;
+    this.els.setPlaytest.checked = on;
+    this.els.ptActions.hidden = !on && this.playtest.count === 0;
+    this.els.ptNote.textContent = on
+      ? `Recording — ${this.playtest.count} entries so far. Nothing is sent anywhere; save the log when you are done.`
+      : this.playtest.count > 0
+        ? `Stopped, with ${this.playtest.count} entries kept. Save them before switching this on again — starting a recording clears the last one.`
+        : 'For watching someone try the app. Control names and timings only: no picture, no puzzle, nothing typed.';
+  }
+
+  /**
+   * Hand the log over as a file.
+   *
+   * A download rather than a copy button or an upload: the tester can open it, read every
+   * line, and decide. A log they cannot inspect before parting with is one they have to
+   * take on trust, and there is no reason to ask that of anyone.
+   */
+  private savePlaytestLog(): void {
+    const blob = new Blob([this.playtest.report()], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `playtest-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    this.els.ptNote.textContent = 'Log saved. It is a plain text file — worth reading before you send it.';
   }
 
   private async openRecord(record: PuzzleRecord): Promise<boolean> {
@@ -1004,12 +1611,18 @@ export class App {
     // Colour boards are derived from geometry, not stored, exactly as the prepared image
     // is derived from the original. Regenerating both on open is what keeps a record to
     // a few kilobytes whatever the puzzle is made of.
+    //
+    // Sized from the *geometry* rather than from the stored picture. They are the same
+    // number for a photo puzzle, and deliberately not for a picture-free shape puzzle,
+    // whose pieces are cut against a square-celled canvas of its own — reading the size
+    // off the photo there would rebuild the colour board at the wrong proportions and
+    // paint every piece slightly out of register with its own outline.
+    const shownW = state.geometry.imageWidth;
+    const shownH = state.geometry.imageHeight;
     const shown: CanvasImageSource =
-      record.picture === 'colours'
-        ? makeColourBoard(state.geometry, image.width, image.height)
-        : image;
+      record.picture === 'colours' ? makeColourBoard(state.geometry, shownW, shownH) : image;
     this.shown = shown;
-    this.renderer.setImage(shown, image.width, image.height);
+    this.renderer.setImage(shown, shownW, shownH);
     this.els.pictureMode.value = record.picture === 'colours' ? 'colours' : 'photo';
     this.els.rules.value = record.rules === 'anyfit' ? 'anyfit' : 'match';
     this.els.cut.value = state.geometry.cut === 'polyomino' ? 'shapes' : 'classic';
@@ -1034,7 +1647,7 @@ export class App {
     // Records written before thumbnails existed get one now, so the library is not
     // permanently full of blank cards for older puzzles.
     if (!record.thumbnail) {
-      record.thumbnail = makeThumbnail(shown, image.width, image.height);
+      record.thumbnail = makeThumbnail(shown, shownW, shownH);
       await putPuzzle(record).catch(() => undefined);
     }
     this.drawReference();
@@ -1382,6 +1995,12 @@ export class App {
       this.applyAppearance();
       if (this.appearance.haptics) this.buzz();
     });
+
+    this.els.setPlaytest.addEventListener('change', () => {
+      this.playtest.setRecording(this.els.setPlaytest.checked);
+      this.updatePlaytestUi();
+    });
+    this.updatePlaytestUi();
 
     this.els.settings.addEventListener('click', (e) => {
       if (e.target === this.els.settings) this.els.settings.hidden = true;
@@ -1903,6 +2522,8 @@ export class App {
       if (!el || el.matches('.help-toggle')) return;
       e.preventDefault();
       e.stopPropagation();
+      // What somebody asks about is a direct list of what did not explain itself.
+      if (e.type === 'click') this.playtest.add('asked', controlName(el));
       this.showTip(el);
     };
     bar.addEventListener('pointerdown', intercept, true);

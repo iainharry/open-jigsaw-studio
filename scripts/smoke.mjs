@@ -1789,6 +1789,162 @@ check('a plain click still selects nothing', nameByTouch.selectedAfterClick === 
 check('but Name group works on the piece you touched', nameByTouch.offered === true);
 check('and the name is stored', nameByTouch.names.includes('Touched group'), nameByTouch.names.join(', ') || 'none');
 
+// 17. Challenge codes. The feature's single promise is that the same code produces the
+// same board for everyone; everything else about it is decoration. So the check is not
+// "a panel opened" but "a second page, booted from nothing but the code, built geometry
+// identical to the first" -- compared by fingerprinting every piece's outline, because
+// piece count matching would pass for two completely different tilings.
+const madeChallenge = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  document.querySelector('.cut').value = 'shapes';
+  document.querySelector('.cut').dispatchEvent(new Event('change', { bubbles: true }));
+  document.querySelector('.picture-mode').value = 'colours';
+  document.querySelector('.shape-set').value = 'pentominoes';
+  document.querySelector('.silhouette').value = 'diamond';
+  document.querySelector('.poly-edges').value = 'flat';
+  document.querySelector('.poly-size').value = '5';
+  document.querySelector('.picture-mode').dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1200));
+
+  document.querySelector('[data-act="challenge"]').click();
+  const panel = document.querySelector('.challenge');
+  const box = panel.getBoundingClientRect();
+  const code = document.querySelector('.ch-code').value;
+  const fingerprint = app.session.state.geometry.pieces
+    .map((p) => `${p.bounds.x.toFixed(1)},${p.bounds.y.toFixed(1)},${p.bounds.w.toFixed(1)},${p.outline.length}`)
+    .join('|');
+  return {
+    code,
+    link: document.querySelector('.ch-link').textContent,
+    visible: !panel.hidden && box.width > 0 && box.height > 0,
+    pieces: app.session.state.geometry.pieces.length,
+    fingerprint,
+  };
+});
+check('a shape puzzle with no photo has a challenge code', /^1-[0-9a-z]+-\d+x\d+-[a-z0-9]+-[0-9a-z]$/.test(madeChallenge.code), madeChallenge.code);
+check('and the panel is actually on screen', madeChallenge.visible === true);
+check('and the link carries the code in the fragment', madeChallenge.link.includes(`#${madeChallenge.code}`), madeChallenge.link);
+
+// The rating is computed off the main flow, so it has to be waited for rather than read.
+const rated = await page.evaluate(async () => {
+  for (let i = 0; i < 100; i++) {
+    const text = document.querySelector('.ch-rating').textContent;
+    if (text && !text.includes('Working out')) return text;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return document.querySelector('.ch-rating').textContent;
+});
+check('a difficulty is worked out and shown', /\d+ pieces · /.test(rated), rated);
+check('and it never claims "at least 0 solutions"', !rated.includes('at least 0'), rated);
+
+const fresh = await browser.newPage({ viewport: { width: 1500, height: 950 } });
+await fresh.addInitScript((seed) => {
+  let s = seed >>> 0;
+  Math.random = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+}, SMOKE_SEED + 5);
+await fresh.goto(`http://127.0.0.1:${port}${BASE}#${madeChallenge.code}`);
+await fresh.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await fresh.waitForTimeout(800);
+const reopened = await fresh.evaluate(() => {
+  const g = globalThis.__ojs.session.state.geometry;
+  return {
+    pieces: g.pieces.length,
+    fingerprint: g.pieces
+      .map((p) => `${p.bounds.x.toFixed(1)},${p.bounds.y.toFixed(1)},${p.bounds.w.toFixed(1)},${p.outline.length}`)
+      .join('|'),
+    title: globalThis.__ojs.session.record.title,
+    colours: globalThis.__ojs.session.record.picture,
+  };
+});
+check('a link opens the identical board on a fresh page', reopened.fingerprint === madeChallenge.fingerprint, `${reopened.pieces} vs ${madeChallenge.pieces} pieces`);
+check('and the scatter seed differs without changing the puzzle', reopened.pieces === madeChallenge.pieces);
+check('and it is named from the code, not "Untitled"', /of \d+$/.test(reopened.title), reopened.title);
+check('and it is a colours-only puzzle', reopened.colours === 'colours');
+
+// A mistyped code must say so. Silently opening a different board is the failure this
+// whole feature is most exposed to, and the checksum exists only to prevent it.
+const typo = madeChallenge.code.slice(0, -3) + (madeChallenge.code.at(-3) === 'q' ? 'w' : 'q') + madeChallenge.code.slice(-2);
+const badLink = await browser.newPage({ viewport: { width: 900, height: 700 } });
+await badLink.goto(`http://127.0.0.1:${port}${BASE}#${typo}`);
+await badLink.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await badLink.waitForTimeout(500);
+const complaint = await badLink.evaluate(() => document.querySelector('.status').textContent);
+check('a mistyped link says so instead of opening another board', /not valid/.test(complaint), complaint.slice(0, 80));
+await badLink.close();
+
+// The printable sheet is generated rather than printed, so it can be inspected.
+const sheet = await fresh.evaluate(() => {
+  const app = globalThis.__ojs;
+  const html = app.challengeSheetHtml(app.currentChallenge());
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const svgs = [...doc.querySelectorAll('svg')];
+  return {
+    svgs: svgs.length,
+    paths: svgs.map((s) => s.querySelectorAll('path').length),
+    // Both drawings must be in the same units, or a cut-out piece will not fit the
+    // printed outline -- the one way this sheet could be worse than no sheet.
+    units: svgs.map((s) => s.getAttribute('width')),
+    pieces: app.session.state.geometry.pieces.length,
+    hasCode: /1-[0-9a-z]+-\d+x\d+/.test(html),
+    // Counted as drawing commands, because "how much is drawn" is the thing that
+    // separates an outline from a printed solution.
+    frameSegments: (doc.querySelector('.edge')?.getAttribute('d') ?? '').split('M').length - 1,
+    gridSegments: (doc.querySelector('.grid')?.getAttribute('d') ?? '').split('M').length - 1,
+  };
+});
+check('the printable sheet has an outline and a piece page', sheet.svgs === 2, `${sheet.svgs} drawings`);
+check('and every piece is on it', sheet.paths[1] === sheet.pieces, `${sheet.paths[1]} of ${sheet.pieces}`);
+check('and both drawings are sized in millimetres', sheet.units.every((u) => u.endsWith('mm')), sheet.units.join(' / '));
+check('and the sheet carries the code back to the screen version', sheet.hasCode === true);
+// The first version of the sheet drew every piece into the frame -- it printed the
+// answer, and passed all four checks above because each of them was true. What none of
+// them asked was what the frame *shows*. A silhouette's edge is a few dozen unit
+// segments; the cut is hundreds, so counting them separates the two decisively.
+check('and the frame is an empty outline, not the solution', sheet.frameSegments < sheet.pieces * 3, `${sheet.frameSegments} bold segments for ${sheet.pieces} pieces`);
+check('and it has a working grid to place pieces on', sheet.gridSegments > 0, `${sheet.gridSegments} faint lines`);
+await fresh.close();
+
+// 18. The playtest recorder. Two things matter and they pull in opposite directions: it
+// has to capture enough to be worth running, and it must not capture anything the tester
+// would be unhappy to hand over. Both are asserted, and the second one is asserted
+// against the actual file rather than against the intention.
+const playtest = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const before = app.playtest.recording;
+  document.querySelector('[data-act="settings"]').click();
+  const box = document.querySelector('.set-playtest');
+  const visible = box.getBoundingClientRect().width > 0;
+
+  box.checked = true;
+  box.dispatchEvent(new Event('change', { bubbles: true }));
+  document.querySelector('[data-act="fit-all"]').click();
+  document.querySelector('[data-act="hints"]').click();
+  const select = document.querySelector('.silhouette');
+  select.dispatchEvent(new Event('focus', { bubbles: true }));
+  select.dispatchEvent(new Event('blur', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 100));
+
+  const text = app.playtest.report();
+  document.querySelector('[data-act="close-settings"]').click();
+  return {
+    offByDefault: before === false,
+    visible,
+    recording: app.playtest.recording,
+    text,
+    // Everything the log must never contain, drawn from what is actually on this page.
+    title: document.querySelector('.title').value,
+  };
+});
+check('the playtest recorder is off until switched on', playtest.offByDefault === true);
+check('and its switch is actually visible in Settings', playtest.visible === true);
+check('and it records once switched on', playtest.recording === true);
+check('and presses land in the log', /press\s+fit-all/.test(playtest.text), playtest.text.split('\n').find((l) => l.includes('fit-all')) ?? 'missing');
+check('and a menu opened and closed without a choice is noticed', /menu\s+Outline/.test(playtest.text), playtest.text.split('\n').find((l) => l.includes('menu')) ?? 'missing');
+check('and the log says in plain words what it holds', playtest.text.includes('no picture, no puzzle, no typing'));
+// The privacy promise, checked against the file rather than trusted.
+check('and the log contains no puzzle title', !playtest.text.includes(playtest.title), playtest.title);
+check('and no image or blob data', !/data:|blob:|base64/.test(playtest.text));
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

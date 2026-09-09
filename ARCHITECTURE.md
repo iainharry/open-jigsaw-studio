@@ -993,7 +993,110 @@ The colour-sort stepper is a hidden zone, which walked straight back into the M2
 overlay once swallowed every click in the app. `.group[data-zone][hidden]` is declared
 first and marked important.
 
-## 26. Known limitations after M2
+## 26. Measuring how hard a puzzle is, and two metrics that failed first (M16)
+
+Difficulty used to be a star rating the player typed in afterwards. That records how it
+felt, which is worth keeping, but it cannot be shown before you start and it cannot be
+compared between two people — and the moment a puzzle can be handed to thirty students at
+once, both of those matter.
+
+Piece count is the obvious proxy and a bad one: a hundred-piece rectangle of squares is
+trivial, a twelve-piece diamond of pentominoes is brutal. Two better-looking measures were
+built and thrown away, and both failures are more instructive than the thing that replaced
+them.
+
+**Search nodes to the first solution.** An exhaustive solver, counting the work before it
+first succeeds. Principled, and it measured almost nothing: across eight generated boards
+the answers were 7, 8, 11, 12, 13 and 24 nodes, because the solver fills cells in reading
+order and the *generator* fills cells in reading order, so the solver walked back into the
+arrangement the board was cut from. It was measuring the agreement between two pieces of
+my own code. Worse, on an 8×10 pentomino board it found nothing in 400,000 nodes and
+reported a board known to be solvable — it was cut from a solution — as unjudgeable.
+
+**Uniform-random play-throughs.** Fill the lowest empty cell with a legal placement chosen
+at random and see how often that finishes. Correct in principle and useless in practice:
+it rated five of nine boards "punishing" with completion rates of exactly zero, which
+separates nothing from nothing.
+
+**What works** is the same play-through with one shallow piece of sense in it — the player
+does not make a move that leaves a single hole nothing can fill, because a person does see
+that. It is the same `strands()` check the generator uses, for the same reason. Two numbers
+come out: how often careless play finishes, and — because that saturates at zero on hard
+boards — how far it typically gets before stalling. The band thresholds are calibrated
+against nine real boards; the 0.6 stall cut is where they actually separated, and the first
+guess of 0.85 put every hard board in one band and left the scale with a top step nobody
+could get off.
+
+The exact solution count is kept as a secondary fact, exhaustive when the space is small
+enough and reported as "at least N" when it is not — never rounded into a number that looks
+exact, and never rendered as "at least 0 solutions", which is a fact about the search
+giving up rather than about the puzzle.
+
+The counter is pinned by a fact from outside this codebase: domino tilings of a 2×N strip
+are the Fibonacci numbers. A solver with an off-by-one, a double-counted symmetry, or
+permuted identical pieces cannot reproduce that for six consecutive values by accident.
+Every other assertion in `packing.test.ts` checks behaviour I chose; that one checks
+arithmetic I did not.
+
+## 27. Challenge codes, and square cells (M16)
+
+A class needs the *same* board, not thirty similar ones. There is no server and no account
+to put a shared puzzle behind — and none is needed, because a shape puzzle played without a
+picture is completely determined by its seed and a handful of settings, and geometry has
+been regenerated from the seed rather than stored since M1. That decision has now paid for
+itself three times: it survived the adjacency refactor, it made save files tiny, and it is
+the only reason a whole puzzle fits in a URL fragment.
+
+`#1-k3j9x-6x8-pd5fa-7` is a board. The fragment never reaches a server even when the page
+is fetched, so the sharing is genuinely local.
+
+Two things this forced.
+
+**A checksum.** One mistyped character would otherwise decode cleanly into a *different*
+valid board, and one student would spend a lesson on a puzzle nobody else can see. Being
+wrong quietly is the failure this codebase keeps meeting; one character of every code
+exists to prevent it. The test mutates every position of a valid code and requires the
+acceptance rate to stay near the 1-in-36 the checksum's size allows.
+
+**Square cells for picture-free shape puzzles.** Cutting against the photograph's
+dimensions gives oblong cells — an L cut at 13×19 on a 1400×900 canvas is a stretched L —
+and, worse, two people opening the same code from differently shaped windows would get
+visibly different boards. So when there is no picture to cover there is no reason to
+distort: the canvas is `cols × 100` by `rows × 100`. This also removed a coupling that had
+been quietly wrong, where `openRecord` rebuilt a colour board from the *stored photo's*
+size rather than from the geometry's own.
+
+The printed sheet is worth its own note, because its first version was a good example of
+passing every assertion while being useless. It drew each piece's outline into the frame —
+which looks like an outline and is in fact the answer. Four checks passed: two drawings,
+every piece present, both in millimetres, and the code carried through. None of them asked
+what the frame *shows*. The frame is now built from the silhouette mask, so it cannot pick
+the cut up again, and the assertion counts drawing commands, because "how much is drawn" is
+precisely what separates an outline from a printed solution. That is the third appearance
+of the same mistake — see hints in §19 and the naming field in §24 — and the general form
+is worth stating plainly: **asserting that something was drawn is not asserting what it
+shows.**
+
+## 28. Recording a playtest (M16)
+
+Every fault found in this project has been found by a person using it. Hints at 2.5px,
+the name field behind the footer, the group that was really a tray — all passed the whole
+suite, because a test asks whether the code does what it was told and never whether anyone
+can find it. 248 tests have caught none of them.
+
+`src/ui/playtest.ts` records the things a suite structurally cannot see: stalls (twenty
+seconds of pointer activity with nothing landing), hunting (a menu opened and closed
+without a choice), and every control asked about in help mode — a direct list of what did
+not explain itself. `docs/playtest.md` is the protocol for using it, and its most
+important instruction is *do not help*.
+
+Three rules held in the implementation and asserted in the smoke test: it is off unless
+deliberately switched on, it never leaves the device by itself (there is no endpoint), and
+it records the app rather than the person — control names, timings, counts. The privacy
+promise is checked against the produced file, not against the intention: the test asserts
+the log contains no puzzle title and nothing resembling image data.
+
+## 29. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

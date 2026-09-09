@@ -18,3 +18,5 @@ export * from './colour.js';
 export * from './colourSort.js';
 export * from './trays.js';
 export * from './serialize.js';
+export * from './packing.js';
+export * from './challenge.js';
