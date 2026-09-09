@@ -20,3 +20,4 @@ export * from './trays.js';
 export * from './serialize.js';
 export * from './packing.js';
 export * from './challenge.js';
+export * from './glyphs.js';

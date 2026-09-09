@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { GLYPHS } from '../glyphs.js';
 import {
   challengeName,
   challengeUrl,
@@ -134,5 +135,59 @@ describe('challengeName', () => {
   it('gives the same name to the same code for everyone', () => {
     const decoded = decodeChallenge(encodeChallenge(base))!;
     expect(challengeName(decoded, 12)).toBe(challengeName(base, 12));
+  });
+});
+
+describe('glyph outlines in codes', () => {
+  const glyphOf = (name: string): Challenge => ({ ...base, silhouette: `glyph:${name}` });
+
+  it('round-trips every glyph', () => {
+    for (const name of Object.keys(GLYPHS)) {
+      const challenge = glyphOf(name);
+      expect(decodeChallenge(encodeChallenge(challenge))).toEqual(challenge);
+    }
+  });
+
+  it('stays short enough to write down', () => {
+    const longest = Object.keys(GLYPHS)
+      .map((n) => encodeChallenge(glyphOf(n)).length)
+      .reduce((a, b) => Math.max(a, b));
+    expect(longest).toBeLessThanOrEqual(32);
+  });
+
+  /**
+   * Codes are the one thing here that other people already hold — somebody has written
+   * one on a whiteboard. Adding the glyph field must not change how a code without one
+   * parses, so this pins an exact string rather than a round trip.
+   */
+  it('leaves codes issued before glyphs existed untouched', () => {
+    expect(encodeChallenge({ ...base, silhouette: 'diamond' })).toBe('1-c29ey-6x8-pd5far-g');
+    expect(decodeChallenge('1-c29ey-6x8-pd5far-g')?.silhouette).toBe('diamond');
+  });
+
+  it('rejects a glyph flag with no name, and a name with no flag', () => {
+    const code = encodeChallenge(glyphOf('5'));
+    const withoutName = code.split('-').filter((_, i) => i !== 4).join('-');
+    expect(decodeChallenge(withoutName)).toBeNull();
+
+    const plain = encodeChallenge({ ...base, silhouette: 'diamond' }).split('-');
+    plain.splice(4, 0, '5');
+    expect(decodeChallenge(plain.join('-'))).toBeNull();
+  });
+
+  it('rejects a glyph that does not exist', () => {
+    const parts = encodeChallenge(glyphOf('5')).split('-');
+    parts[4] = 'wombat';
+    // Recomputed checksum, so this is a *valid-looking* code naming a missing glyph --
+    // the case that would otherwise sail through and produce an empty board.
+    const payload = parts.slice(0, -1).join('-');
+    let total = 0;
+    for (let i = 0; i < payload.length; i++) total += payload.charCodeAt(i) * (i + 1);
+    expect(decodeChallenge(`${payload}-${(total % 36).toString(36)}`)).toBeNull();
+  });
+
+  it('names a glyph board in words a teacher can say', () => {
+    expect(challengeName(glyphOf('5'), 9)).toBe('“5” in 9 pieces');
+    expect(challengeName(glyphOf('triangle'), 6)).toBe('Triangle in 6 pieces');
   });
 });

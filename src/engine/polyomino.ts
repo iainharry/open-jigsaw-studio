@@ -37,6 +37,7 @@ import {
   type GeometryOptions,
 } from './geometry.js';
 import { deriveSeed, makeRng } from './rng.js';
+import { glyphMask } from './glyphs.js';
 import type { PathCommand, PieceGeometry, Point, PuzzleGeometry } from './types.js';
 
 export interface Cell {
@@ -126,7 +127,41 @@ export type ShapeSet = 'mixed' | 'tetrominoes' | 'pentominoes';
  * file and regenerated from it — a function cannot survive JSON, and a puzzle that could
  * not be reopened would be worse than no silhouettes at all.
  */
-export type Silhouette = 'rectangle' | 'diamond' | 'ellipse' | 'cross' | 'frame';
+export type BuiltInSilhouette = 'rectangle' | 'diamond' | 'ellipse' | 'cross' | 'frame';
+
+/**
+ * The outline the pieces fill: one of the built-in shapes, or `glyph:<name>` for a
+ * letter, digit, shape or sign from `glyphs.ts`.
+ *
+ * A string rather than a mask, for the reason given above and for one more: a mask is
+ * tied to the grid it was made for, so storing one would mean a puzzle could not be
+ * regenerated at a different size — and regenerating from small stored parameters is the
+ * decision the whole save format and the challenge codes rest on.
+ */
+export type Silhouette = BuiltInSilhouette | `glyph:${string}`;
+
+/**
+ * Masks are cached because a glyph is rasterised per cell against every stroke it has,
+ * and the tiler asks the same question thousands of times for one board. Keyed by name
+ * and grid, and small: a session uses one outline at a time.
+ */
+const glyphCache = new Map<string, Uint8Array | null>();
+
+function cachedGlyphMask(name: string, rows: number, cols: number): Uint8Array | null {
+  const key = `${name}|${rows}x${cols}`;
+  let mask = glyphCache.get(key);
+  if (mask === undefined) {
+    mask = glyphMask(name, rows, cols);
+    if (glyphCache.size > 40) glyphCache.clear();
+    glyphCache.set(key, mask);
+  }
+  return mask;
+}
+
+/** The glyph a silhouette names, or null when it names a built-in shape. */
+export function silhouetteGlyph(shape: Silhouette): string | null {
+  return shape.startsWith('glyph:') ? shape.slice(6) : null;
+}
 
 export interface PolyominoOptions extends GeometryOptions {
   /** Average cells per piece the tiler aims for. Larger means fewer, chunkier pieces. */
@@ -166,8 +201,16 @@ export function inSilhouette(
       const inC = Math.max(1, Math.floor(cols / 4));
       return row < inR || row >= rows - inR || col < inC || col >= cols - inC;
     }
-    default:
-      return true;
+    default: {
+      const glyph = silhouetteGlyph(shape);
+      if (!glyph) return true;
+      const mask = cachedGlyphMask(glyph, rows, cols);
+      // An unknown glyph falls back to the full rectangle rather than to an empty board.
+      // A puzzle with no cells cannot be played, cannot be explained, and would arrive
+      // from a stale save file or a link -- the two places a name is least trustworthy.
+      if (!mask) return true;
+      return mask[row * cols + col] === 1;
+    }
   }
 }
 
@@ -177,6 +220,12 @@ export function silhouetteMask(
   cols: number,
   shape: Silhouette = 'rectangle',
 ): Uint8Array {
+  const glyph = silhouetteGlyph(shape);
+  if (glyph) {
+    const drawn = cachedGlyphMask(glyph, rows, cols);
+    if (drawn) return drawn.slice();
+    return new Uint8Array(rows * cols).fill(1);
+  }
   const mask = new Uint8Array(rows * cols);
   for (let r = 0; r < rows; r++) {
     for (let col = 0; col < cols; col++) {

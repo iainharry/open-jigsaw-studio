@@ -1803,6 +1803,8 @@ const madeChallenge = await page.evaluate(async () => {
   document.querySelector('.silhouette').value = 'diamond';
   document.querySelector('.poly-edges').value = 'flat';
   document.querySelector('.poly-size').value = '5';
+  // Any fit, because the difficulty measure describes a packing puzzle and nothing else.
+  document.querySelector('.rules').value = 'anyfit';
   document.querySelector('.picture-mode').dispatchEvent(new Event('change', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1200));
 
@@ -1944,6 +1946,109 @@ check('and the log says in plain words what it holds', playtest.text.includes('n
 // The privacy promise, checked against the file rather than trusted.
 check('and the log contains no puzzle title', !playtest.text.includes(playtest.title), playtest.title);
 check('and no image or blob data', !/data:|blob:|base64/.test(playtest.text));
+
+// 19. Letter, number and shape outlines. The feature's claim is that the puzzle *is* the
+// shape, so the checks are about what ends up on screen, not about a setting being
+// stored: an outline the player cannot see is the same failure as hints drawn at two and
+// a half pixels.
+const glyphPuzzle = await page.evaluate(async () => {
+  const set = (sel, v) => { const e = document.querySelector(sel); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
+  set('.cut', 'shapes');
+  document.querySelector('.pieces').value = '12';
+  // Match the picture, which is what a letter puzzle for a five-year-old is: every piece
+  // has one home. It also puts the M16 rating bug back in reach -- the panel used to
+  // describe this board as a packing puzzle it is not.
+  set('.rules', 'match');
+  set('.picture-mode', 'photo');
+  set('.poly-edges', 'tabs');
+  set('.silhouette', 'glyph:5');
+  await new Promise((r) => setTimeout(r, 2000));
+  document.querySelector('[data-act="fit-board"]').click();
+  await new Promise((r) => setTimeout(r, 400));
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const app = globalThis.__ojs;
+  const g = app.session.state.geometry;
+
+  // Sample the board's bounding box on the canvas. If the outline is painted, a good part
+  // of that box is bare table -- the corners the 5 does not reach. If the old bounding-box
+  // fill came back, every sample would be board.
+  const canvas = document.querySelector('.board');
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const vp = app.viewport;
+  const rect = canvas.getBoundingClientRect();
+  const originX = (0 - vp.x) * vp.zoom + rect.width / 2;
+  const originY = (0 - vp.y) * vp.zoom + rect.height / 2;
+  const table = ctx.getImageData(2, 2, 1, 1).data;
+  let outsideTheShape = 0;
+  let samples = 0;
+  for (let r = 0; r < g.rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const x = Math.round((originX + ((c + 0.5) * g.imageWidth) / g.cols * vp.zoom) * dpr);
+      const y = Math.round((originY + ((r + 0.5) * g.imageHeight) / g.rows * vp.zoom) * dpr);
+      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) continue;
+      const px = ctx.getImageData(x, y, 1, 1).data;
+      samples++;
+      // The table colour is read off the canvas rather than assumed, so this does not
+      // quietly stop testing anything the day somebody changes the default theme.
+      if (px[0] === table[0] && px[1] === table[1] && px[2] === table[2]) outsideTheShape++;
+    }
+  }
+  return {
+    picture: app.session.record.picture,
+    status: document.querySelector('.status').textContent,
+    pieces: g.pieces.length,
+    rows: g.rows,
+    cols: g.cols,
+    silhouette: g.polyominoOptions?.silhouette,
+    outsideFraction: samples === 0 ? 0 : outsideTheShape / samples,
+    samples,
+  };
+});
+check('a letter outline can be chosen and is recorded', glyphPuzzle.silhouette === 'glyph:5', String(glyphPuzzle.silhouette));
+check('and it switches the photo off rather than squashing the letter', glyphPuzzle.picture === 'colours');
+check('and says why the piece count is not the one asked for', /needs a \d+×\d+ grid/.test(glyphPuzzle.status), glyphPuzzle.status.slice(0, 70));
+// The one that matters: the shape has to be on the board while it is being solved, not
+// only once it is finished.
+check('and the board shows the outline, not its bounding box', glyphPuzzle.outsideFraction > 0.15 && glyphPuzzle.outsideFraction < 0.75, `${Math.round(glyphPuzzle.outsideFraction * 100)}% of the box is bare table`);
+
+// A glyph must survive the code, which needed a sixth field to carry its name.
+const glyphCode = await page.evaluate(() => {
+  document.querySelector('[data-act="challenge"]').click();
+  return {
+    code: document.querySelector('.ch-code').value,
+    rating: document.querySelector('.ch-rating').textContent,
+  };
+});
+check('a letter puzzle has a challenge code', /-5-[0-9a-z]$/.test(glyphCode.code), glyphCode.code);
+// M16 rated every board as a packing puzzle. Match the picture has one home per piece and
+// no packing to do, so "punishing" was a sentence about a puzzle nobody was playing.
+check('and a match-the-picture board is not rated as a packing puzzle', /one home/.test(glyphCode.rating), glyphCode.rating.slice(0, 60));
+
+const glyphPage = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+await glyphPage.goto(`http://127.0.0.1:${port}${BASE}#${glyphCode.code}`);
+await glyphPage.waitForFunction(() => globalThis.__ojs?.session, null, { timeout: 30_000 });
+await glyphPage.waitForTimeout(700);
+const reopenedGlyph = await glyphPage.evaluate(() => {
+  const g = globalThis.__ojs.session.state.geometry;
+  return { silhouette: g.polyominoOptions?.silhouette, rows: g.rows, cols: g.cols, title: globalThis.__ojs.session.record.title };
+});
+check('and a link rebuilds the same letter', reopenedGlyph.silhouette === 'glyph:5' && reopenedGlyph.rows === glyphPuzzle.rows, `${reopenedGlyph.silhouette} ${reopenedGlyph.rows}x${reopenedGlyph.cols}`);
+check('and names it after the letter', reopenedGlyph.title.includes('5'), reopenedGlyph.title);
+
+const glyphSheet = await glyphPage.evaluate(() => {
+  const app = globalThis.__ojs;
+  const doc = new DOMParser().parseFromString(app.challengeSheetHtml(app.currentChallenge()), 'text/html');
+  const border = doc.querySelector('.edge')?.getAttribute('d') ?? '';
+  const grid = doc.querySelector('.grid')?.getAttribute('d') ?? '';
+  const g = app.session.state.geometry;
+  return { border: border.split('M').length - 1, grid: grid.split('M').length - 1, cells: g.rows * g.cols };
+});
+// A letter's boundary is long and its interior is small, which is the opposite shape of a
+// rectangle -- and it is how you can tell the printed frame is the letter and not the box.
+check('the printed frame traces the letter, not the page', glyphSheet.border > 30 && glyphSheet.border < glyphSheet.cells, `${glyphSheet.border} edges for ${glyphSheet.cells} cells`);
+await glyphPage.close();
 
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');

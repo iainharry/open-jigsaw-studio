@@ -1096,7 +1096,56 @@ it records the app rather than the person — control names, timings, counts. Th
 promise is checked against the produced file, not against the intention: the test asserts
 the log contains no puzzle title and nothing resembling image data.
 
-## 29. Known limitations after M2
+## 29. Letters, numbers and shapes as outlines (M17)
+
+The puzzle already filled a named outline. Making that outline a **5**, or a triangle, or
+the letter **A** turns the same mechanic into something a five-year-old is doing for a
+reason: they are not looking at a picture of a five, they are making one out of pieces.
+The cost was small because `Silhouette` was already a name and `silhouetteMask()` already
+turned a name into a grid of on/off cells — a letter is just a different mask, and it
+inherits challenge codes, printable worksheets and the difficulty measure untouched.
+
+**Deliberately untagged.** The content this came from carried curriculum identifiers. They
+were a liability twice over: they date — Victoria replaced its mathematics codes wholesale
+in 2025, so citing the old ones marks a resource as stale — and they are
+jurisdiction-locked. The set supplied also mixed three different code systems in one table
+and mapped `×` and `÷` to a Foundation descriptor that covers neither. "Fill the outline
+of a 5" needs no maintenance and no footnote.
+
+**Geometry, not a bitmap font.** The obvious approach is a small pixel grid per glyph,
+scaled up, and it fails on the thing that matters: a stroke landing one cell wide can only
+be filled by single squares, so the letter becomes a queue of scraps. Thickness has to be
+a parameter that adapts to the grid, so a glyph is polylines and polygons and the
+rasteriser guarantees at least two and a half cells of stroke at any size.
+
+**And that floor is what nearly shipped the feature broken.** On a small grid, two and a
+half cells is an enormous fraction of the glyph, so the strokes swell until they touch.
+Asked for forty cells, `8`, `6`, `9`, `B` and `E` came back at **coverage 1.00** — solid
+rectangles with the right piece count. They passed a hand-drawn contact sheet, because
+most glyphs looked fine and I stopped looking; and they passed the first test, which asked
+for coverage under 0.9 — a threshold a solid block misses only by being solid. The fix is
+that `glyphGrid()` searches upward until the glyph is legible, so a request for a
+twelve-piece `8` returns rather more than twelve pieces and the app says why. Coverage is
+one-sided, though: it catches a blob and says nothing about the opposite failure, a C on
+eight rows that is a blob with a notch — hence a floor on rows as well.
+
+**The board had to show the outline.** Painting the bounding box was tolerable while every
+outline was a diamond or a cross; you could infer the shape from the pieces going down. It
+stopped being tolerable the moment the outline was the subject: a puzzle whose whole point
+is "make a 5" showed a grey rectangle, and the thing being made was invisible until it was
+finished. That is not an assistance level, it is the question the puzzle is asking. Note
+the first attempt filled *and stroked* one per-cell path, which strokes every cell — the
+letter came out as graph paper. Area and border are separate paths now.
+
+**Two bugs from M16 fell out of this.** The difficulty measure was being run on every
+board, including Match-the-picture ones, where it produced sentences like "punishing —
+careless play stalls at 43% full" about a puzzle with one home per piece and no packing to
+do. It shipped because the panel had only ever been opened on an Any fit board. And a
+glyph outline forces the picture off: the grid comes from the glyph's proportions, so on a
+photograph's canvas the cells are not square and the letter is squashed. Given the choice
+between distorting the photo and distorting the letter, the letter wins.
+
+## 30. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

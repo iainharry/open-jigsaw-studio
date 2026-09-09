@@ -26,7 +26,8 @@
  * does not parse returns null and the app says so; it never half-applies.
  */
 
-import type { ShapeSet, Silhouette } from './polyomino.js';
+import { silhouetteGlyph, type ShapeSet, type Silhouette } from './polyomino.js';
+import { GLYPHS } from './glyphs.js';
 
 export interface Challenge {
   readonly seed: number;
@@ -61,6 +62,22 @@ const SHAPES: Readonly<Record<string, Silhouette>> = {
   f: 'frame',
 };
 
+/**
+ * The flag character that says "the outline is a glyph, and its name is in the next
+ * field".
+ *
+ * A sixth field rather than a wider flag block. Widening the block would have changed how
+ * every existing code parses, and codes are the one thing here that other people already
+ * hold — someone has written one on a whiteboard. An optional trailing field costs
+ * nothing to codes that do not use it and leaves every one already issued still valid.
+ */
+const GLYPH_FLAG = 'g';
+
+/** Glyph names are lower-cased into codes, so decoding has to find the real name back. */
+function glyphByCode(code: string): string | null {
+  return Object.keys(GLYPHS).find((name) => name.toLowerCase() === code) ?? null;
+}
+
 const codeFor = <T extends string>(table: Readonly<Record<string, T>>, value: T): string =>
   Object.keys(table).find((key) => table[key] === value) ?? Object.keys(table)[0]!;
 
@@ -82,14 +99,17 @@ function checksum(payload: string): string {
 
 export function encodeChallenge(challenge: Challenge): string {
   const seed = (challenge.seed >>> 0).toString(36);
+  const glyph = silhouetteGlyph(challenge.silhouette);
   const flags =
     codeFor(SETS, challenge.shapeSet) +
-    codeFor(SHAPES, challenge.silhouette) +
+    (glyph ? GLYPH_FLAG : codeFor(SHAPES, challenge.silhouette)) +
     String(Math.max(1, Math.min(5, Math.round(challenge.targetCells)))) +
     (challenge.flatEdges ? 'f' : 't') +
     (challenge.rules === 'anyfit' ? 'a' : 'm') +
     (challenge.rotate ? 'r' : '');
-  const payload = `1-${seed}-${challenge.rows}x${challenge.cols}-${flags}`;
+  const payload = `1-${seed}-${challenge.rows}x${challenge.cols}-${flags}${
+    glyph ? `-${glyph.toLowerCase()}` : ''
+  }`;
   return `${payload}-${checksum(payload)}`;
 }
 
@@ -106,10 +126,13 @@ export function decodeChallenge(text: string): Challenge | null {
   const code = hash.trim().toLowerCase();
 
   const parts = code.split('-');
-  if (parts.length !== 5) return null;
-  const [version, seedText, grid, flags, check] = parts as [string, string, string, string, string];
+  // Five fields, or six when the outline is a glyph and its name rides in an extra one.
+  if (parts.length !== 5 && parts.length !== 6) return null;
+  const check = parts[parts.length - 1]!;
+  const glyphCode = parts.length === 6 ? parts[4]! : null;
+  const [version, seedText, grid, flags] = parts as [string, string, string, string];
   if (version !== '1') return null;
-  if (checksum(`1-${seedText}-${grid}-${flags}`) !== check) return null;
+  if (checksum(parts.slice(0, -1).join('-')) !== check) return null;
 
   const seed = Number.parseInt(seedText, 36);
   if (!Number.isFinite(seed) || seed < 0 || !/^[0-9a-z]+$/.test(seedText)) return null;
@@ -122,9 +145,23 @@ export function decodeChallenge(text: string): Challenge | null {
 
   if (flags.length < 5 || flags.length > 6) return null;
   const shapeSet = SETS[flags[0]!];
-  const silhouette = SHAPES[flags[1]!];
   const targetCells = Number(flags[2]);
-  if (!shapeSet || !silhouette) return null;
+  if (!shapeSet) return null;
+
+  // The glyph flag and the glyph field have to agree in both directions: a 'g' with no
+  // name is as broken as a name with no 'g', and quietly picking one over the other would
+  // hand somebody a board that is not the one on the whiteboard.
+  let silhouette: Silhouette | undefined;
+  if (flags[1] === GLYPH_FLAG) {
+    if (!glyphCode || !/^[a-z0-9]+$/.test(glyphCode)) return null;
+    const name = glyphByCode(glyphCode);
+    if (!name) return null;
+    silhouette = `glyph:${name}`;
+  } else {
+    if (glyphCode !== null) return null;
+    silhouette = SHAPES[flags[1]!];
+  }
+  if (!silhouette) return null;
   if (!Number.isInteger(targetCells) || targetCells < 1 || targetCells > 5) return null;
   if (flags[3] !== 'f' && flags[3] !== 't') return null;
   if (flags[4] !== 'a' && flags[4] !== 'm') return null;
@@ -157,6 +194,11 @@ export function challengeUrl(base: string, challenge: Challenge): string {
  * "Cross of 12" is something a teacher can say out loud, and a hex string is not.
  */
 export function challengeName(challenge: Challenge, pieces?: number): string {
+  const glyph = silhouetteGlyph(challenge.silhouette);
+  if (glyph) {
+    const named = glyph.length === 1 ? `“${glyph}”` : glyph[0]!.toUpperCase() + glyph.slice(1);
+    return pieces ? `${named} in ${pieces} pieces` : String(named);
+  }
   const shape =
     challenge.silhouette === 'rectangle'
       ? challenge.shapeSet === 'pentominoes'

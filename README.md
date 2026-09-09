@@ -3,12 +3,13 @@
 An open-source, local-first, cross-platform digital jigsaw studio. Works fully offline.
 No account, no server, no network.
 
-**Status: M16.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
+**Status: M17.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
 drag, snap, rotate, multi-select, gather the edges, sort by colour, file pieces into named
 trays, and keep a library of puzzles. Cut shape pieces instead — L's, T's, crosses and the
 twelve pentominoes — into a rectangle, diamond, oval, cross or frame, with or without a
-picture. Share a shape puzzle as a short code that reproduces the identical board with no
-account and no server, print it as a cut-out worksheet, and see a difficulty worked out
+picture — or make the outline a letter, a number, a triangle or an arrow, so the puzzle is
+the shape rather than a picture of it. Share a shape puzzle as a short code that reproduces
+the identical board with no account and no server, print it as a cut-out worksheet, and see a difficulty worked out
 from how the puzzle actually behaves rather than from how many pieces it has. Installs as
 an app and runs completely offline, with no runtime dependencies and no account.
 
@@ -347,11 +348,12 @@ edge and colour sorting, in-app help, shipping (PWA, GitHub Pages, portable file
 preparation, assistance levels, notes/difficulty/history, appearance, autosave and sharing — which
 completes the original brief — a second cut that makes shape pieces, named groups, free-form
 solving, pentominoes and outlines, keyboard play, and then challenge codes, printable
-worksheets, measured difficulty and a playtest recorder.
+worksheets, measured difficulty, a playtest recorder, and letter, number and shape
+outlines.
 
 Deliberately deferred: tags and search, which solve a problem a five-puzzle library does
 not have, and a TV/remote-control interface, which is a different input model rather than a
-layout change. `ARCHITECTURE.md` §29 lists what is deliberately not built.
+layout change. `ARCHITECTURE.md` §30 lists what is deliberately not built.
 
 The most useful next step is not a feature. `docs/playtest.md` is the protocol for
 watching somebody who has never seen the app try to use it; every fault worth fixing so far

@@ -51,6 +51,11 @@ import {
   analyseTiling,
   tile,
   silhouetteMask,
+  silhouetteGlyph,
+  glyphGrid,
+  glyphLabel,
+  GLYPH_GROUPS,
+  type Silhouette,
   CHALLENGE_CELL,
   challengeName,
   challengeUrl,
@@ -489,13 +494,15 @@ export class App {
                 <option value="pentominoes">Pentominoes</option>
               </select>
             </label>
-            <label class="field poly-only" data-help="Fill an outline instead of a rectangle. The pieces have to cover the shape exactly \u2014 a diamond or a cross is markedly harder than a rectangle, because the edge gives you fewer straight runs to work along.">Outline
+            <label class="field poly-only" data-help="Fill an outline instead of a rectangle. The pieces have to cover the shape exactly \u2014 a diamond or a cross is markedly harder than a rectangle, because the edge gives you fewer straight runs to work along. Choose a number, letter or shape and the puzzle becomes that: you are not looking at a picture of a 5, you are making one out of pieces.">Outline
               <select class="silhouette">
-                <option value="rectangle">Rectangle</option>
-                <option value="diamond">Diamond</option>
-                <option value="ellipse">Oval</option>
-                <option value="cross">Cross</option>
-                <option value="frame">Frame</option>
+                <optgroup label="Plain">
+                  <option value="rectangle">Rectangle</option>
+                  <option value="diamond">Diamond</option>
+                  <option value="ellipse">Oval</option>
+                  <option value="cross">Cross</option>
+                  <option value="frame">Frame</option>
+                </optgroup>
               </select>
             </label>
             <label class="field poly-only" data-help="Tabs interlock like a jigsaw. Flat gives straight cuts, which looks cleaner and is considerably harder because nothing holds together visually.">Edges
@@ -674,6 +681,23 @@ export class App {
       chOpen: q<HTMLInputElement>('.ch-open'),
       chNote: q<HTMLElement>('.ch-note'),
     };
+    /**
+     * The outline menu, filled from the glyph table rather than written out in the
+     * markup. Fifty-seven options typed by hand is fifty-seven chances to name one thing
+     * two different ways, and the grouping is what makes the list readable at all.
+     */
+    for (const group of GLYPH_GROUPS) {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = group.label;
+      for (const name of group.names) {
+        const option = document.createElement('option');
+        option.value = `glyph:${name}`;
+        option.textContent = glyphLabel(name);
+        optgroup.append(option);
+      }
+      this.els.silhouette.append(optgroup);
+    }
+
     this.setupHelp();
 
     /**
@@ -1040,7 +1064,15 @@ export class App {
     // Capped again after multiplying: the cap is about how small a *cell* may get, and
     // for the shape cut the cells are what the grid is made of.
     const cellTarget = Math.min(shapes ? target * targetCells : target, limits.maximum);
-    const { rows, cols } = chooseGrid(image.width, image.height, cellTarget);
+    const outline = this.els.silhouette.value as Silhouette;
+    const glyph = shapes ? silhouetteGlyph(outline) : null;
+    // A glyph has proportions of its own -- an I is narrow, a W is wide -- and forcing
+    // one into a grid chosen from the window would make a fat I and a cramped W. The
+    // requested cell count is honoured only approximately for the same reason: hitting it
+    // exactly means distorting the letter, which is the thing being avoided.
+    const { rows, cols } = glyph
+      ? glyphGrid(glyph, cellTarget)
+      : chooseGrid(image.width, image.height, cellTarget);
 
     /**
      * The canvas the pieces are cut against.
@@ -1056,7 +1088,7 @@ export class App {
      * the shapes they are named after, and the code reproduces exactly what its author
      * saw, which is the only promise the code makes.
      */
-    const square = shapes && colours;
+    const square = shapes && (colours || glyph !== null);
     const cutW = square ? cols * CHALLENGE_CELL : image.width;
     const cutH = square ? rows * CHALLENGE_CELL : image.height;
 
@@ -1066,12 +1098,7 @@ export class App {
           targetCells,
           flatEdges,
           shapeSet: this.els.shapeSet.value as 'mixed' | 'tetrominoes' | 'pentominoes',
-          silhouette: this.els.silhouette.value as
-            | 'rectangle'
-            | 'diamond'
-            | 'ellipse'
-            | 'cross'
-            | 'frame',
+          silhouette: outline,
         })
       : generateGeometry(seed, rows, cols, cutW, cutH, GEOMETRY_OPTIONS);
     const state = stateFromGeometry(geometry, {
@@ -1132,7 +1159,17 @@ export class App {
     // of them applies without one: a colours-only board is drawn at whatever size it is
     // played at, and quoting the resolution of the photograph it does not use was simply
     // reporting a constraint that had been removed two lines earlier.
-    if (colours) {
+    if (glyph && made > requested * 1.25) {
+      // The grid was raised for legibility, so the piece count is not the one that was
+      // asked for. Saying nothing would look like the Pieces menu being ignored, and the
+      // reason is not guessable: an 8 has three horizontal strokes and two holes, and
+      // below about fourteen rows they merge into a solid rectangle.
+      this.setStatus(
+        `${made} pieces, not ${requested}. “${glyphLabel(glyph)}” needs a ${rows}×${cols} grid ` +
+          `to still look like itself — any smaller and the strokes merge into a block. ` +
+          `Choose a simpler outline for fewer pieces.`,
+      );
+    } else if (colours) {
       this.setStatus(
         shapes
           ? `${made} shape pieces of about ${targetCells} squares each, in colours rather than a picture.`
@@ -1225,6 +1262,27 @@ export class App {
    * fastest. It is measured when someone asks.
    */
   private showChallengeRating(challenge: Challenge): void {
+    /**
+     * The difficulty measure only describes a packing puzzle.
+     *
+     * It asks how often a piece can be put somewhere that turns out to be wrong, which is
+     * a question that only exists under Any fit. Match the picture has exactly one home
+     * per piece and exactly one solution; running the measure on it produced sentences
+     * like "punishing — careless play stalls at 43% full" about a board where careless
+     * play is not a thing you can do. That was measuring a puzzle nobody was playing, and
+     * it shipped in M16 because the panel was only ever opened on an Any fit board.
+     */
+    if (challenge.rules !== 'anyfit') {
+      const tiling = tile(challenge.seed, challenge.rows, challenge.cols, {
+        targetCells: challenge.targetCells,
+        shapeSet: challenge.shapeSet,
+        silhouette: challenge.silhouette,
+      });
+      this.els.chRating.textContent =
+        `${tiling.pieces.length} pieces, each with one home. ` +
+        `Switch Rules to Any fit for a packing puzzle, and a difficulty is worked out for it.`;
+      return;
+    }
     this.els.chRating.textContent = 'Working out how hard this one is…';
     // A frame's grace so the panel paints before the search blocks the thread. The
     // alternative is a worker, which for a few hundred milliseconds once per press is
@@ -2159,6 +2217,22 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
    * then explaining the result, the combination is made impossible and the change said.
    */
   private enforceRules(): void {
+    /**
+     * A letter cut against a photograph's proportions is a squashed letter.
+     *
+     * The grid for a glyph comes from the glyph's own shape, so the cells are only square
+     * if the canvas matches — which it does for a picture-free puzzle and does not for a
+     * photograph. Given the choice between distorting the photo and distorting the
+     * letter, the letter wins: it is the entire subject of the puzzle. So a glyph outline
+     * switches the picture off, in the same way Any fit already switches flat edges on.
+     */
+    if (this.els.silhouette.value.startsWith('glyph:') && this.els.pictureMode.value !== 'colours') {
+      this.els.pictureMode.value = 'colours';
+      this.setStatus(
+        'A number, letter or shape outline is played without a photo — otherwise the picture\u2019s ' +
+          'proportions squash the outline. Switched to colours only.',
+      );
+    }
     if (this.els.rules.value !== 'anyfit') return;
     const changed: string[] = [];
     if (this.els.cut.value !== 'shapes') {

@@ -18,6 +18,7 @@ import {
   trayPieceCount,
 } from '../engine/trays.js';
 import type { Cluster, PieceGeometry, Point, Tray, Viewport } from '../engine/types.js';
+import { silhouetteMask, type Silhouette } from '../engine/polyomino.js';
 import { BakeCache, bakeScaleFor, outlineToPath2D } from './bakeCache.js';
 import { visibleWorldRect, worldToScreen, type ScreenSize } from './viewport.js';
 
@@ -55,6 +56,9 @@ export class Renderer {
     medianFrameMs: 0,
   };
   private readonly recentFrames: number[] = [];
+  /** Cached board outline, keyed by the outline and the grid it was built for. */
+  private outlineKey = '';
+  private outlinePaths: { area: Path2D; border: Path2D } | null = null;
 
   showBoard: boolean;
   background: string;
@@ -145,6 +149,61 @@ export class Renderer {
     return true;
   }
 
+  /**
+   * The board's shape, or null when it is the whole rectangle.
+   *
+   * Two paths, not one, and the reason is what the first version got wrong: filling and
+   * stroking the same per-cell path strokes *every* cell, so a letter came out looking
+   * like graph paper and the shape it was meant to show was lost in its own grid. The
+   * area is the union of the cells; the line is only the edges where a cell meets
+   * something that is not one. Holes — the middle of a frame, the counter of an A — fall
+   * out of that with no special case.
+   */
+  private boardOutline(state: PuzzleState): { area: Path2D; border: Path2D } | null {
+    const g = state.geometry;
+    const shape = (g.polyominoOptions?.['silhouette'] ?? 'rectangle') as Silhouette;
+    if (g.cut !== 'polyomino' || shape === 'rectangle') return null;
+
+    const key = `${shape}|${g.rows}x${g.cols}|${g.imageWidth}x${g.imageHeight}`;
+    if (this.outlineKey === key) return this.outlinePaths;
+
+    const mask = silhouetteMask(g.rows, g.cols, shape);
+    const inside = (r: number, c: number): boolean =>
+      r >= 0 && c >= 0 && r < g.rows && c < g.cols && mask[r * g.cols + c] === 1;
+
+    const area = new Path2D();
+    const border = new Path2D();
+    const w = g.imageWidth / g.cols;
+    const h = g.imageHeight / g.rows;
+    for (let r = 0; r < g.rows; r++) {
+      for (let c = 0; c < g.cols; c++) {
+        if (!inside(r, c)) continue;
+        const x = c * w;
+        const y = r * h;
+        area.rect(x, y, w, h);
+        if (!inside(r - 1, c)) {
+          border.moveTo(x, y);
+          border.lineTo(x + w, y);
+        }
+        if (!inside(r + 1, c)) {
+          border.moveTo(x, y + h);
+          border.lineTo(x + w, y + h);
+        }
+        if (!inside(r, c - 1)) {
+          border.moveTo(x, y);
+          border.lineTo(x, y + h);
+        }
+        if (!inside(r, c + 1)) {
+          border.moveTo(x + w, y);
+          border.lineTo(x + w, y + h);
+        }
+      }
+    }
+    this.outlineKey = key;
+    this.outlinePaths = { area, border };
+    return this.outlinePaths;
+  }
+
   draw(state: PuzzleState, vp: Viewport): void {
     const t0 = performance.now();
     const bakesBefore = this.bakeCache.bakeCount;
@@ -158,35 +217,57 @@ export class Renderer {
 
     if (this.showBoard) {
       const tl = worldToScreen(vp, size, { x: 0, y: 0 });
+      /**
+       * The board is the *outline*, not the rectangle around it.
+       *
+       * Painting the bounding box was tolerable while every outline was a diamond or a
+       * cross — you could infer the shape from the pieces as they went down. It stopped
+       * being tolerable the moment an outline could be a letter: a puzzle whose whole
+       * point is "make a 5" showed a grey rectangle, so the thing being made was invisible
+       * until it was finished. That is not a hint or an assistance level; it is the
+       * question the puzzle is asking, and it has to be on screen.
+       */
+      const outline = this.boardOutline(state);
+      ctx.save();
+      ctx.translate(tl.x, tl.y);
+      ctx.scale(vp.zoom, vp.zoom);
       ctx.fillStyle = this.boardTint;
-      ctx.fillRect(
-        tl.x,
-        tl.y,
-        state.geometry.imageWidth * vp.zoom,
-        state.geometry.imageHeight * vp.zoom,
-      );
-      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(
-        tl.x,
-        tl.y,
-        state.geometry.imageWidth * vp.zoom,
-        state.geometry.imageHeight * vp.zoom,
-      );
+      if (outline) {
+        ctx.fill(outline.area);
+        // Heavier than the plain board edge. The outline is the question the puzzle is
+        // asking — "make this shape" — so it has to read as a shape from across a room,
+        // not as a faint hairline someone has to go looking for.
+        ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+        ctx.lineWidth = 2 / vp.zoom;
+        ctx.stroke(outline.border);
+      } else {
+        ctx.fillRect(0, 0, state.geometry.imageWidth, state.geometry.imageHeight);
+        ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+        ctx.lineWidth = 1 / vp.zoom;
+        ctx.strokeRect(0, 0, state.geometry.imageWidth, state.geometry.imageHeight);
+      }
+      ctx.restore();
 
       // The ghost: the finished picture, faintly, exactly where it belongs. Painted
       // inside the board block so it lands on the board and under every piece — a guide
       // to lay pieces over, not a layer competing with them.
       if (this.ghost > 0 && this.source) {
         ctx.save();
+        // Clipped to the outline for the same reason the tint is: a ghost spilling into
+        // the corners of the bounding box would show picture where no piece can go.
+        // Done in world space, then drawn in world space too, so one transform serves
+        // both and the clip cannot drift from what it is clipping.
+        ctx.translate(tl.x, tl.y);
+        ctx.scale(vp.zoom, vp.zoom);
+        if (outline) ctx.clip(outline.area);
         ctx.globalAlpha = this.ghost;
         ctx.imageSmoothingQuality = 'low';
         ctx.drawImage(
           this.source,
-          tl.x,
-          tl.y,
-          state.geometry.imageWidth * vp.zoom,
-          state.geometry.imageHeight * vp.zoom,
+          0,
+          0,
+          state.geometry.imageWidth,
+          state.geometry.imageHeight,
         );
         ctx.restore();
       }
