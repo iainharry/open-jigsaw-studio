@@ -1145,7 +1145,68 @@ glyph outline forces the picture off: the grid comes from the glyph's proportion
 photograph's canvas the cells are not square and the letter is squashed. Given the choice
 between distorting the photo and distorting the letter, the letter wins.
 
-## 30. Known limitations after M2
+## 30. Folding the toolbar away, and a grid that punished it (M18)
+
+Reported from a tablet: the toolbar takes too much of the screen. Measured, it takes more
+than that — **220px, 27 to 29 per cent of a landscape tablet's height.** Section 12 fixed a
+500-piece puzzle opening at 28px per piece by *giving* the board room, and M15 had to trim
+`fitBoard()`'s margin from 6% to 3% to claw back a single pixel after the zone labels went
+in. Hiding the toolbar returns 39 to 72 per cent more board and takes a 500-piece puzzle
+from 22–28px per piece to 35–40px — from below the 34px legibility floor to comfortably
+above it. That is more than every layout tweak in this project put together.
+
+Three decisions.
+
+**It never hides itself.** An auto-hiding toolbar disappears mid-thought and reappears when
+a hand passes the top of the screen. This only moves when somebody presses something.
+
+**The way back is a small tab, not a floating button.** Anything persistent sits on the
+board, and on a tablet the board is the screen, so it will eventually be where a piece is.
+It is 62×26 — a finger target, not a lid — at the top centre, directly under where the
+toolbar was, and the one strip a person holding a tablet by its sides is not touching.
+
+**The status line moves rather than disappearing.** It lives in the toolbar, so hiding the
+toolbar would silently take away "Hints on — touch a piece", the save readout and every
+warning the app gives. It is moved into the footer. Trading feedback for space, invisibly,
+is this project's most repeated mistake.
+
+**The bug worth recording is the layout one.** The shell was
+`grid-template-rows: auto 1fr auto`. `display: none` removes an element from a grid
+entirely, so with the header hidden the remaining two children slid up a row and the
+*footer* inherited the `1fr` stretch. The board shrank by up to 41% on the press of a
+button whose entire purpose was to enlarge it. Every part measured correctly while it did:
+the toolbar really was 0px and the footer's contents really were 17px tall — the footer's
+own box was 318px of empty panel. The shell is a flex column now, which has no positional
+rows to slide.
+
+## 31. The user guide, generated from the app (M18)
+
+Two halves, made in opposite ways.
+
+**The control reference is generated, never written.** Every control already carries a
+`data-help` sentence for help mode. Copying those into a document would create a second
+copy of forty-nine strings to keep in step with the first, and it would fall out of step
+silently — the guide describing a button that had been renamed. It is read out of the live
+DOM when somebody asks for it, so it cannot drift. The smoke test asserts that every
+control the app documents appears in the guide, which is what keeps "every control" true
+rather than aspirational.
+
+**Everything else is hand-written, because none of it can be derived.** Six walkthroughs,
+the settings that change other settings, and a section on using the app with a class or a
+young child. A tooltip can say what a button does; it cannot say what two buttons do
+together, and that is the entire reason a guide is worth having.
+
+**It is HTML, not SVG, and not PDF.** The couplings were drawn as an SVG diagram first, and
+SVG text does not wrap: every explanation — the part worth reading — was cut off at the
+right-hand edge, and one row's label overflowed its box into the arrow beside it. It
+rendered, it looked like a diagram, and the content was missing. HTML wraps, reflows on a
+phone and prints. And no PDF library: this project has no runtime dependencies and will not
+gain one to make a document every browser already prints.
+
+The panel copy is pinned to the app's theme so it does not flash white against a dark
+board; a saved copy carries no theme, because it then belongs to whoever opens it.
+
+## 32. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

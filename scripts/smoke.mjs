@@ -2050,6 +2050,111 @@ const glyphSheet = await glyphPage.evaluate(() => {
 check('the printed frame traces the letter, not the page', glyphSheet.border > 30 && glyphSheet.border < glyphSheet.cells, `${glyphSheet.border} edges for ${glyphSheet.cells} cells`);
 await glyphPage.close();
 
+// 20. Full board. The claim is "more room for the puzzle", so the check is the board's
+// measured height and the piece size that falls out of it -- not that a class was
+// toggled. The first version of this made the board *smaller* by up to 41% and every
+// individual part measured correctly while it did: the toolbar really was 0px and the
+// footer's contents really were 17px tall, but `display:none` had removed the header
+// from a three-row grid and the footer had inherited the 1fr stretch.
+const fullBoard = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const boardHeight = () => Math.round(document.querySelector('.board').getBoundingClientRect().height);
+  const pieceEdge = () => {
+    const g = app.session.state.geometry;
+    return Math.sqrt((g.imageWidth * g.imageHeight * app.viewport.zoom * app.viewport.zoom) / g.pieces.length);
+  };
+  document.querySelector('[data-act="fit-board"]').click();
+  await new Promise((r) => setTimeout(r, 250));
+  const before = { board: boardHeight(), piece: pieceEdge(), bar: Math.round(document.querySelector('.bar').getBoundingClientRect().height) };
+
+  document.querySelector('[data-act="full-board"]').click();
+  await new Promise((r) => setTimeout(r, 350));
+  document.querySelector('[data-act="fit-board"]').click();
+  await new Promise((r) => setTimeout(r, 250));
+  const tab = document.querySelector('.chrome-tab').getBoundingClientRect();
+  const after = {
+    board: boardHeight(),
+    piece: pieceEdge(),
+    footer: Math.round(document.querySelector('.foot').getBoundingClientRect().height),
+    statusInFooter: !!document.querySelector('.foot .status'),
+    statusText: document.querySelector('.status')?.textContent ?? '',
+    tabVisible: !document.querySelector('.chrome-tab').hidden && tab.width > 20 && tab.height > 20,
+    tabOnScreen: tab.top >= 0 && tab.bottom <= window.innerHeight && tab.left >= 0 && tab.right <= window.innerWidth,
+    tabArea: Math.round(tab.width * tab.height),
+  };
+
+  // Back again, by the tab rather than the button -- that is the only way back once the
+  // toolbar is gone, so it is the path worth testing.
+  document.querySelector('.chrome-tab').click();
+  await new Promise((r) => setTimeout(r, 350));
+  const restored = {
+    barVisible: !document.querySelector('.bar').hidden,
+    statusBackInBar: !!document.querySelector('.bar .status'),
+    board: boardHeight(),
+  };
+  return { before, after, restored, windowHeight: window.innerHeight };
+});
+check('the toolbar really is a large part of the screen', fullBoard.before.bar >= 100, `${fullBoard.before.bar}px of ${fullBoard.windowHeight}px`);
+check('Full board gives the board more room, not less', fullBoard.after.board > fullBoard.before.board, `${fullBoard.before.board}px -> ${fullBoard.after.board}px`);
+// The footer inheriting the stretch is exactly how this went wrong the first time.
+check('and the footer stays a footer', fullBoard.after.footer < 60, `${fullBoard.after.footer}px`);
+check('and pieces get bigger with it', fullBoard.after.piece > fullBoard.before.piece, `${fullBoard.before.piece.toFixed(0)}px -> ${fullBoard.after.piece.toFixed(0)}px per piece`);
+check('the way back is visible and fully on screen', fullBoard.after.tabVisible && fullBoard.after.tabOnScreen);
+// Small enough not to be sitting on the puzzle, big enough for a finger. Apple and
+// Google both put the minimum touch target at 44px on the long side.
+check('and it is a thumb-sized target, not a lid over the board', fullBoard.after.tabArea > 900 && fullBoard.after.tabArea < 4000, `${fullBoard.after.tabArea}px²`);
+// Hiding the toolbar hides the status line with it unless it is moved, which would take
+// away every warning the app gives in exchange for some space -- silently.
+check('the status line moves to the footer rather than vanishing', fullBoard.after.statusInFooter === true, fullBoard.after.statusText.slice(0, 50));
+check('and the tab brings everything back', fullBoard.restored.barVisible && fullBoard.restored.statusBackInBar);
+
+// 21. The user guide. It is generated from the running app, so the check is that it
+// describes *this* app rather than that a document was produced.
+const guide = await page.evaluate(() => {
+  document.querySelector('[data-act="guide"]').click();
+  const panel = document.querySelector('.guide');
+  const box = panel.getBoundingClientRect();
+  const html = globalThis.__ojs.guideHtml();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const documented = [...doc.querySelectorAll('td.name')].map((td) => td.textContent.trim());
+  // Every control the app documents to a person must appear in the guide's reference.
+  const inApp = [...document.querySelectorAll('[data-help]')]
+    .filter((el) => !el.closest('.guide'))
+    .map((el) => {
+      const own = [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim();
+      return (own || el.textContent.trim() || el.className).slice(0, 40);
+    });
+  const missing = inApp.filter((name) => !documented.includes(name));
+  return {
+    panelVisible: !panel.hidden && box.width > 200 && box.height > 200,
+    frameFilled: (document.querySelector('.guide-frame').srcdoc ?? '').length > 5000,
+    documented: documented.length,
+    inApp: inApp.length,
+    missing: missing.slice(0, 4),
+    // Self-contained: nothing to fetch, so it works from a Downloads folder with no network.
+    externals: doc.querySelectorAll('link[href], script[src], img[src]').length,
+    hasRecipes: /Build the border first/.test(html) && /Settings that change other settings/.test(html),
+    hasTeaching: /young child/.test(html),
+    // SVG text does not wrap, and the first version cut every coupling explanation off at
+    // the right-hand edge while still looking like a diagram.
+    noSvgProse: doc.querySelectorAll('svg text').length === 0,
+    // The copy shown in the panel is pinned to the app's theme so it does not flash white
+    // against a dark board; the copy that gets saved is not, because it then belongs to
+    // whoever opens it and should follow their device.
+    panelThemed: /data-theme="(dark|light)"/.test(document.querySelector('.guide-frame').srcdoc ?? ''),
+    savedFollowsReader: !/data-theme="/.test(html),
+  };
+});
+check('the guide panel opens and is on screen', guide.panelVisible && guide.frameFilled);
+check('and documents every control the app documents', guide.missing.length === 0, guide.missing.join(', ') || `${guide.documented} of ${guide.inApp}`);
+check('and carries the walkthroughs and the couplings', guide.hasRecipes === true);
+check('and the section on using it with a class', guide.hasTeaching === true);
+check('and is self-contained, so it works offline from a Downloads folder', guide.externals === 0, `${guide.externals} external references`);
+check('and puts no prose in an SVG, where it cannot wrap', guide.noSvgProse === true);
+check('and follows the app theme when read inside the app', guide.panelThemed === true);
+check('while a saved copy follows the reader\'s own device', guide.savedFollowsReader === true);
+await page.evaluate(() => document.querySelector('[data-act="close-guide"]').click());
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

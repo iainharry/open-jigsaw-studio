@@ -71,6 +71,7 @@ import {
 import { PointerInput, type Tool } from '../input/pointer.js';
 import { PrepareView } from './prepare.js';
 import { Playtest } from './playtest.js';
+import { buildGuide, collectControls } from './guide.js';
 import { renderEdited } from '../render/applyEdit.js';
 import { Renderer } from '../render/renderer.js';
 import { makeColourBoard } from '../render/colourBoard.js';
@@ -123,6 +124,15 @@ const PIECE_CHOICES = [12, 20, 50, 100, 200, 300, 500, 1000, 2000];
  * point where a mid-range tablet starts to care.
  */
 const MAX_IMAGE_EDGE = 5000;
+
+/**
+ * Shown at the foot of the guide, so a printed copy says which version it describes.
+ *
+ * Injected by the build from package.json rather than typed here, because a version
+ * number kept in two places is a version number that is wrong in one of them.
+ */
+declare const __APP_VERSION__: string;
+const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'development build';
 const GEOMETRY_OPTIONS: GeometryOptions = { vertexJitter: 0.06, tabScale: 1, randomiseTabs: true };
 
 export type RefMode = 'right' | 'bottom' | 'off';
@@ -239,6 +249,11 @@ export class App {
     ptNote: HTMLElement;
     ptActions: HTMLElement;
     edgesOnly: HTMLButtonElement;
+    guide: HTMLElement;
+    guideFrame: HTMLIFrameElement;
+    chromeTab: HTMLButtonElement;
+    bar: HTMLElement;
+    foot: HTMLElement;
     challenge: HTMLElement;
     chCode: HTMLInputElement;
     chLink: HTMLElement;
@@ -412,6 +427,7 @@ export class App {
           <button class="btn" data-act="shuffle" data-help="Break everything apart and scatter it again. The picture and piece count stay the same.">Shuffle</button>
           </span>
           <span class="group" data-zone="View">
+            <button class="btn" data-act="full-board" data-help="Fold the whole toolbar away so the board has the screen. On a tablet the toolbar is more than a quarter of the height. A small tab stays at the top of the board to bring it back — or press F.">Full board</button>
             <button class="btn zoom" data-act="zoom-out" data-help="Make pieces smaller so you can see more at once. Keyboard: −" title="Zoom out (−)">&minus;</button>
             <span class="zoom-readout" data-help="Current zoom, and how big one piece is on screen. It turns amber when pieces get too small to see comfortably." title="Zoom, and how big a piece is on screen">100%</span>
             <button class="btn zoom" data-act="zoom-in" data-help="Make pieces bigger. The number to the left shows how big a piece is on screen. Keyboard: +" title="Zoom in (+)">+</button>
@@ -526,6 +542,7 @@ export class App {
           </span>
           <span class="group" data-zone="App">
             <button class="btn" data-act="challenge" data-help="Share this shape puzzle as a short code, or open somebody else's. Everyone using the code gets the identical board, because the code *is* the puzzle — nothing is uploaded anywhere.">Challenge…</button>
+            <button class="btn" data-act="guide" data-help="Open the user guide: what every control does, how to build a border, sort a big puzzle, share a challenge and set one up for a child. Read it here, or save it to keep and print.">Guide</button>
             <button class="btn" data-act="settings" data-help="Theme, table colour, piece edges and how often the puzzle saves itself.">Settings</button>
           <button class="btn help-toggle" data-act="help" data-help="Turn on help mode, then point at or tap any control to read what it does.">?</button>
           </span>
@@ -541,6 +558,7 @@ export class App {
             <canvas class="ref-img"></canvas>
           </aside>
         </main>
+        <button class="chrome-tab" data-act="full-board" hidden aria-label="Show the toolbar" title="Show the toolbar (F)">▾</button>
         <footer class="foot"><span class="stats"></span></footer>
         <div class="tip" hidden></div>
         <div class="settings" hidden>
@@ -594,6 +612,17 @@ export class App {
             </div>
             <p class="lib-note"></p>
             <div class="lib-list"></div>
+          </div>
+        </div>
+        <div class="guide" hidden>
+          <div class="guide-panel">
+            <div class="set-head"><strong>User guide</strong>
+              <span class="lib-head-actions">
+                <button class="btn" data-act="save-guide">Save a copy…</button>
+                <button class="btn" data-act="close-guide">Close</button>
+              </span>
+            </div>
+            <iframe class="guide-frame" title="User guide"></iframe>
           </div>
         </div>
         <div class="challenge" hidden>
@@ -674,6 +703,11 @@ export class App {
       ptNote: q<HTMLElement>('.pt-note'),
       ptActions: q<HTMLElement>('.pt-actions'),
       edgesOnly: q<HTMLButtonElement>('[data-act="edges-only"]'),
+      guide: q<HTMLElement>('.guide'),
+      guideFrame: q<HTMLIFrameElement>('.guide-frame'),
+      chromeTab: q<HTMLButtonElement>('.chrome-tab'),
+      bar: q<HTMLElement>('.bar'),
+      foot: q<HTMLElement>('.foot'),
       challenge: q<HTMLElement>('.challenge'),
       chCode: q<HTMLInputElement>('.ch-code'),
       chLink: q<HTMLElement>('.ch-link'),
@@ -748,6 +782,10 @@ export class App {
         this.els.settings.hidden = false;
       }
       else if (act === 'close-settings') this.els.settings.hidden = true;
+      else if (act === 'guide') this.openGuide();
+      else if (act === 'save-guide') this.saveGuide();
+      else if (act === 'close-guide') this.els.guide.hidden = true;
+      else if (act === 'full-board') this.setChrome(this.els.bar.hidden ? 'shown' : 'hidden');
       else if (act === 'challenge') this.openChallengePanel();
       else if (act === 'close-challenge') this.els.challenge.hidden = true;
       else if (act === 'copy-challenge') void this.copyChallenge();
@@ -865,6 +903,7 @@ export class App {
       else if (e.key === '0') this.fitBoard();
       else if (e.key === '9') this.fitAll();
       else if (e.key === 't' || e.key === 'T') this.newTray();
+      else if (e.key === 'f' || e.key === 'F') this.setChrome(this.els.bar.hidden ? 'shown' : 'hidden');
       else if (e.key === 'Tab') this.cycleSelection(e.shiftKey ? -1 : 1);
       else if (e.key.startsWith('Arrow')) this.nudgeSelection(e.key, e.shiftKey);
       else if (e.key === 'Enter' || e.key === ' ') this.placeSelection();
@@ -1609,6 +1648,123 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
 <h2>The pieces — cut these out</h2>
 <svg width="${sheetW}mm" height="${piecesH}mm" viewBox="0 0 ${sheetW} ${piecesH}">${laid.join('')}</svg>
 </body></html>`;
+  }
+
+  /**
+   * Fold the toolbar away so the board has the screen.
+   *
+   * Not a comfort feature. Measured on four tablet sizes the toolbar is **220px** — 27 to
+   * 29 per cent of a landscape tablet's height — and section 12 already had to fight for
+   * single pixels of board to keep a 500-piece puzzle above the 34px legibility floor.
+   * Hiding it gives back about forty per cent more board, which is more than every
+   * layout tweak in this project put together.
+   *
+   * Three decisions worth defending.
+   *
+   * **It never hides itself.** An auto-hiding toolbar disappears mid-thought and reappears
+   * when your hand passes the top of the screen, which is worse than one you asked to
+   * hide. This only moves when somebody presses something.
+   *
+   * **The way back is a small tab, not a floating button.** Anything persistent sits on
+   * top of the board, and on a tablet the board *is* the screen, so it will eventually be
+   * where a piece is. It is kept to a thumb-sized target at the top centre — directly
+   * under where the toolbar was, so "it pulls back down from here" is spatially true, and
+   * the one strip a person holding a tablet by its sides is not touching.
+   *
+   * **The status line moves rather than disappearing.** It lives in the toolbar, so
+   * hiding the toolbar would silently take away "Hints on — touch a piece", the save
+   * readout and every warning the app gives. It is moved into the footer, which is thirty
+   * pixels and always there. Losing feedback to gain space would be a bad trade made
+   * invisibly, which is this project's most repeated mistake.
+   */
+  private setChrome(state: 'hidden' | 'shown'): void {
+    const hide = state === 'hidden';
+    this.els.bar.hidden = hide;
+    this.els.chromeTab.hidden = !hide;
+    this.els.chromeTab.textContent = hide ? '▾' : '▴';
+    this.root.querySelector('.ojs')?.setAttribute('data-chrome', state);
+
+    // The status element itself is moved, not copied: two of them would drift apart the
+    // first time one of the nine places that write to it used the wrong handle.
+    const status = this.root.querySelector<HTMLElement>('.status');
+    if (status) {
+      if (hide) this.els.foot.prepend(status);
+      else this.els.bar.append(status);
+    }
+
+    /**
+     * Fullscreen, but only where the screen is the scarce thing.
+     *
+     * On a tablet the browser's own address bar costs more height than this toolbar, so
+     * asking for the screen is the same intent as hiding the toolbar and should not be a
+     * second control to find. On a desktop, fullscreen is an intrusive mode change nobody
+     * asked for, so it is left alone. Coarse pointer is the honest test for "this is a
+     * touchscreen"; a refusal is ignored, because the toolbar has already gone and the
+     * feature works without it.
+     */
+    if (window.matchMedia('(pointer: coarse)').matches) {
+      const doc = document as Document & { webkitFullscreenElement?: Element };
+      if (hide && !document.fullscreenElement && !doc.webkitFullscreenElement) {
+        void document.documentElement.requestFullscreen?.().catch(() => undefined);
+      } else if (!hide && document.fullscreenElement) {
+        void document.exitFullscreen?.().catch(() => undefined);
+      }
+    }
+
+    // The canvas has changed size, so the board has to be re-measured and redrawn --
+    // otherwise the extra height is empty table until the next zoom or drag.
+    requestAnimationFrame(() => {
+      this.renderer.resize();
+      this.dirty = true;
+    });
+    this.setStatus(
+      hide
+        ? 'Toolbar hidden — press F to bring it back.'
+        : 'Toolbar back.',
+    );
+  }
+
+  /**
+   * The guide, built from the app that is running.
+   *
+   * Rendered on demand rather than shipped as a file: the control reference is read out
+   * of the live toolbar, so it describes *this* version and cannot quietly disagree with
+   * the buttons next to it. Building it costs a few milliseconds once.
+   *
+   * Shown in an iframe rather than injected into the page. The guide has its own
+   * stylesheet, and dropping a second set of rules into the app's document is how a
+   * heading in a help panel ends up restyling the toolbar.
+   */
+  private guideHtml(theme?: 'dark' | 'light'): string {
+    return buildGuide(collectControls(this.root), APP_VERSION, theme);
+  }
+
+  private openGuide(): void {
+    this.els.guide.hidden = false;
+    // srcdoc rather than a blob URL: no object to revoke, and nothing to leak if the
+    // panel is opened and closed twenty times.
+    // Pinned to the app's theme here, so the guide does not flash white against a dark
+    // board. A saved copy is built without it and follows the reader's own device.
+    this.els.guideFrame.srcdoc = this.guideHtml(this.appearance.theme);
+  }
+
+  /**
+   * Save the guide as a file.
+   *
+   * One self-contained HTML file — styles inline, diagrams as SVG, no fonts to fetch — so
+   * it opens on any device, works with no network, and prints to PDF from the browser.
+   * Generating a PDF here would mean adding a runtime dependency to this project to
+   * produce something every browser already makes from a page.
+   */
+  private saveGuide(): void {
+    const blob = new Blob([this.guideHtml()], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'open-jigsaw-studio-guide.html';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    this.setStatus('Guide saved. Open it in a browser to read, or print it to keep a PDF.');
   }
 
   private updatePlaytestUi(): void {
