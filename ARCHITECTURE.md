@@ -1259,7 +1259,47 @@ exactly one socket accepts a piece and the geometry settles what the picture can
 **0.22 with flat edges**, where the picture is the only clue there is. The tabbed number is
 the softer judgement and is offered as such.
 
-## 33. Known limitations after M2
+## 33. Where a new tray lands (M20)
+
+Reported from a tablet: sort the edges, press New tray, and the tray drops onto the loose
+scatter. `findTraySpot()` dodged other trays and was blind to pieces — it put the tray near
+the top-left of the view and hoped.
+
+It is worse than untidy, and the reason is the draw order. **Trays paint behind their
+contents**, so a loose piece inside a tray's footprint is drawn on top of the panel and is
+indistinguishable from a piece already filed. The one thing a tray is for — telling you
+what is in it — is exactly what the overlap destroys.
+
+**Nothing the player put somewhere gets moved.** The obvious fix is to shove the loose
+pieces out from under the new tray, and it was the fix suggested. It is the wrong way
+round: a tray is the app's furniture and the pieces are the player's work, so the furniture
+should give way. The search now avoids loose clusters as well as trays, and the pieces are
+never touched.
+
+Three details earned their place.
+
+**The tray is created, measured, then moved.** Its height depends on how the contents pack,
+which cannot be known before it exists, so placing it from an estimate would leave exactly
+the overlaps this is meant to remove.
+
+**The search is by rings, not by scan.** A scan takes the first clear spot in reading
+order, which on a board whose middle is empty means the far side of the screen. Rings find
+the *nearest* clear spot, so the tray appears near where the eye already is.
+
+**The picture area is a soft obstacle.** It holds no loose pieces, so the search was happy
+to put a tray in the middle of the board — clear, and squarely in the way of the thing
+being built. But zoomed to the board, the board *is* the view: a tray placed off screen
+would be worse than one in the way, because it would have to be gone looking for. So the
+board is avoided on a first pass and allowed on a second.
+
+**The numbers.** With the old placement restored, 31 of 36 combinations of screen size,
+piece count and tray count put the tray on top of pieces — and on a tablet held in portrait
+it overlapped on the very first tray, which is how this was found. With the search, none of
+the 36 overlap. That measurement is what makes the smoke assertion one that can fail, and
+the assertion counts the pieces under the tray itself rather than reading back the app's
+own verdict.
+
+## 34. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.

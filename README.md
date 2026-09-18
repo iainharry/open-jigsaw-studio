@@ -3,7 +3,7 @@
 An open-source, local-first, cross-platform digital jigsaw studio. Works fully offline.
 No account, no server, no network.
 
-**Status: M19.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
+**Status: M20.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
 drag, snap, rotate, multi-select, gather the edges, sort by colour, file pieces into named
 trays, and keep a library of puzzles. Cut shape pieces instead — L's, T's, crosses and the
 twelve pentominoes — into a rectangle, diamond, oval, cross or frame, with or without a
@@ -368,7 +368,7 @@ outlines, a foldaway toolbar, a generated user guide, and bundled pictures.
 
 Deliberately deferred: tags and search, which solve a problem a five-puzzle library does
 not have, and a TV/remote-control interface, which is a different input model rather than a
-layout change. `ARCHITECTURE.md` §33 lists what is deliberately not built.
+layout change. `ARCHITECTURE.md` §34 lists what is deliberately not built.
 
 The most useful next step is not a feature. `docs/playtest.md` is the protocol for
 watching somebody who has never seen the app try to use it; every fault worth fixing so far

@@ -44,6 +44,7 @@ import {
   stateFromGeometry,
   createTray,
   defaultTrayWidth,
+  moveTray,
   deleteTray,
   renameTray,
   setTrayCollapsed,
@@ -273,6 +274,16 @@ export class App {
     chOpen: HTMLInputElement;
     chNote: HTMLElement;
   };
+
+  /**
+   * Whether the last new tray found genuinely empty space.
+   *
+   * Public because the smoke test reads it: whether the search *succeeds* is the thing
+   * worth asserting, and it is invisible from the outside — a tray sitting on pieces and
+   * a tray sitting on nothing look identical in a screenshot until you look at what is
+   * under it.
+   */
+  lastTrayWasClear = true;
 
   /** The bundled pictures, once the manifest has been fetched. Null means not yet. */
   private samples: SampleEntry[] | null = null;
@@ -2864,8 +2875,20 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     const state = this.session.state;
     const ids = [...this.selection].filter((id) => state.clusters.has(id));
 
-    const spot = this.findTraySpot(state);
-    const tray = createTray(state, { x: spot.x, y: spot.y, clusters: ids });
+    // Made first, then moved. A tray's height depends on how its contents pack, so the
+    // only way to place it without overlapping anything is to know its real size -- which
+    // means it has to exist. Created off to one side so the measurement is not taken
+    // while it sits on top of the very pieces being avoided.
+    const tray = createTray(state, { x: 0, y: 0, clusters: ids });
+    const measured = trayBounds(state, tray);
+    const spot = this.findTraySpot(state, { w: measured.w, h: measured.h }, tray.id);
+    moveTray(state, tray.id, spot.x - tray.x, spot.y - tray.y);
+
+    // Recorded so the fallback below can be justified by measurement rather than by
+    // imagination: on a board with nowhere clear, the search returns its starting point
+    // and the tray lands on pieces anyway.
+    const placed = trayBounds(state, tray);
+    this.lastTrayWasClear = this.spotIsClear(state, placed, tray.id);
 
     this.activeTray = tray.id;
     this.clearSelection();
@@ -2891,39 +2914,146 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
    * view: a tray dropped in the middle covers the board, which is the one place it must
    * not be. Existing trays are stepped over so a second tray does not land on the first.
    */
-  private findTraySpot(state: PuzzleState): { x: number; y: number } {
+  /**
+   * Somewhere to put a new tray.
+   *
+   * This used to dodge other trays and nothing else, so a tray dropped straight onto the
+   * loose scatter — and trays paint *behind* their contents, which means a loose piece
+   * inside the footprint is drawn on top of the panel and looks exactly like a piece
+   * already in the tray. Reported as "messy"; it is worse than messy, because the one
+   * thing a tray is for is telling you what is in it.
+   *
+   * So the search now also avoids loose pieces. Nothing the player put somewhere is moved:
+   * a tray is the app's furniture and the pieces are the player's, and furniture is what
+   * should give way.
+   *
+   * `footprint` is the tray's real size, measured after it exists rather than estimated —
+   * the height depends on how the contents pack, which is not knowable in advance.
+   */
+  private findTraySpot(
+    state: PuzzleState,
+    footprint?: { w: number; h: number },
+    ignoreTray?: number,
+  ): { x: number; y: number } {
     const size = this.renderer.size;
     const view = {
       tl: screenToWorld(this.viewport, size, { x: 0, y: 0 }),
       br: screenToWorld(this.viewport, size, { x: size.width, y: size.height }),
     };
-    const width = defaultTrayWidth(state);
+    const width = footprint?.w ?? defaultTrayWidth(state);
+    const height = footprint?.h ?? trayMetrics(state).header;
     const gap = trayMetrics(state).header * 0.5;
 
-    let x = view.tl.x + (view.br.x - view.tl.x) * 0.03;
-    const y0 = view.tl.y + (view.br.y - view.tl.y) * 0.05;
-    let y = y0;
+    // Loose clusters only: a cluster already in a tray is not in the way, it is filed.
+    const loose: { minX: number; minY: number; maxX: number; maxY: number }[] = [];
+    for (const cluster of state.clusters.values()) {
+      if (state.trayOfCluster.has(cluster.id)) continue;
+      const bounds = clusterWorldBounds(state, cluster.id);
+      if (bounds) loose.push(bounds);
+    }
 
-    // Step past anything already occupying the column, then wrap to a second column.
-    for (let guard = 0; guard < 40; guard++) {
-      let clash = false;
+    /**
+     * The picture area is a *soft* obstacle.
+     *
+     * It is empty of loose pieces, so the search above is happy to put a tray in the
+     * middle of it — clear, and squarely in the way of the thing you are building. But
+     * when the view is zoomed to the board the board *is* the view, and there is genuinely
+     * nowhere else on screen; a tray placed off screen would be worse than one in the way,
+     * because you would have to go looking for it. So it is avoided on a first pass and
+     * allowed on a second.
+     */
+    const board = { x: 0, y: 0, w: state.geometry.imageWidth, h: state.geometry.imageHeight };
+    const offBoard = (x: number, y: number): boolean =>
+      !(x < board.w && x + width > board.x && y < board.h && y + height > board.y);
+
+    const clearAt = (x: number, y: number): boolean => {
       for (const other of state.trays.values()) {
+        if (other.id === ignoreTray) continue;
         const b = trayBounds(state, other);
-        const overlaps =
-          x < b.x + b.w + gap && x + width + gap > b.x && y < b.y + b.h + gap && y + gap > b.y - b.h;
-        if (overlaps) {
-          y = b.y + b.h + gap;
-          clash = true;
-          break;
+        if (
+          x < b.x + b.w + gap &&
+          x + width + gap > b.x &&
+          y < b.y + b.h + gap &&
+          y + height + gap > b.y
+        ) {
+          return false;
         }
       }
-      if (!clash) break;
-      if (y > view.br.y) {
-        y = y0;
-        x += width + gap;
+      for (const b of loose) {
+        if (x < b.maxX && x + width > b.minX && y < b.maxY && y + height > b.minY) return false;
+      }
+      return true;
+    };
+
+    const x0 = view.tl.x + (view.br.x - view.tl.x) * 0.03;
+    const y0 = view.tl.y + (view.br.y - view.tl.y) * 0.05;
+    const step = gap * 2;
+
+    /**
+     * Searched outward from the top-left of the view in rings rather than scanned across.
+     * A scan finds the first clear spot in reading order, which on a board whose middle is
+     * empty means the far side of the screen; rings find the *nearest* clear spot, so the
+     * tray lands near where the eye already is.
+     */
+    const search = (avoidBoard: boolean): { x: number; y: number } | null => {
+      for (let ring = 0; ring < 26; ring++) {
+        const candidates: { x: number; y: number }[] = [];
+        for (let dy = 0; dy <= ring; dy++) {
+          for (const dx of ring === 0 ? [0] : [ring, -ring]) {
+            candidates.push({ x: x0 + dx * step, y: y0 + dy * step });
+          }
+          if (dy !== ring) continue;
+          for (let dx = -ring + 1; dx < ring; dx++) {
+            candidates.push({ x: x0 + dx * step, y: y0 + ring * step });
+          }
+        }
+        for (const { x, y } of candidates) {
+          if (x + width < view.tl.x || x > view.br.x) continue;
+          if (y + height < view.tl.y || y > view.br.y) continue;
+          if (avoidBoard && !offBoard(x, y)) continue;
+          if (clearAt(x, y)) return { x, y };
+        }
+      }
+      return null;
+    };
+
+    // Nowhere clear at all: the caller is told, and the tray lands where it used to.
+    return search(true) ?? search(false) ?? { x: x0, y: y0 };
+  }
+
+  /** A tray's measured footprint in world space. Exposed so a test can check what is under it. */
+  trayFootprint(trayId: number): { x: number; y: number; w: number; h: number } {
+    const state = this.session!.state;
+    return trayBounds(state, state.trays.get(trayId)!);
+  }
+
+  /** A loose cluster's world bounds. Exposed for the same reason. */
+  clusterBox(clusterId: number): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    return clusterWorldBounds(this.session!.state, clusterId);
+  }
+
+  /** Is this rectangle free of loose pieces and other trays? */
+  private spotIsClear(
+    state: PuzzleState,
+    box: { x: number; y: number; w: number; h: number },
+    ignoreTray: number,
+  ): boolean {
+    for (const cluster of state.clusters.values()) {
+      if (state.trayOfCluster.has(cluster.id)) continue;
+      const b = clusterWorldBounds(state, cluster.id);
+      if (!b) continue;
+      if (box.x < b.maxX && box.x + box.w > b.minX && box.y < b.maxY && box.y + box.h > b.minY) {
+        return false;
       }
     }
-    return { x, y };
+    for (const other of state.trays.values()) {
+      if (other.id === ignoreTray) continue;
+      const b = trayBounds(state, other);
+      if (box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Select every edge and corner piece — the first move in solving any real puzzle. */

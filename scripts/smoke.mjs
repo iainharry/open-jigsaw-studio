@@ -2235,6 +2235,74 @@ check('a plain picture is measured, not guessed at', blanks.tabbed.measured > 0.
 check('and tabs stay quiet about it, because the shapes settle it', !/blank/.test(blanks.tabbed.status), blanks.tabbed.status.slice(0, 60));
 check('while flat edges say so, because the picture is the only clue', /blank and have identical twins/.test(blanks.flat.status), blanks.flat.status.slice(0, 80));
 
+// 24. Where a new tray lands. Reported from a tablet: sorting the edges and pressing New
+// tray drops the tray onto the loose scatter. Trays paint *behind* their contents, so a
+// loose piece inside the footprint is drawn on top of the panel and looks exactly like a
+// piece already filed -- which makes the one thing a tray is for, telling you what is in
+// it, actively misleading.
+//
+// The check is what is underneath the tray, not that a tray appeared. Measured with the
+// old placement restored, 31 of 36 board-and-screen combinations overlapped; with this,
+// none did -- so this assertion is one that can fail.
+const trayPlacement = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const reset = (sel, v) => { const e = document.querySelector(sel); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
+  reset('.rules', 'match');
+  reset('.cut', 'classic');
+  reset('.picture-mode', 'photo');
+  document.querySelector('.pieces').value = '200';
+  document.querySelector('.pieces').dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 3500));
+
+  // Every tray gone, so this measures placement rather than the leftovers of section 5.
+  for (const id of [...app.session.state.trays.keys()]) app.session.state.trays.delete(id);
+  app.session.state.trayOfCluster.clear();
+
+  document.querySelector('[data-act="fit-all"]').click();
+  await new Promise((r) => setTimeout(r, 400));
+  document.querySelector('[data-act="select-edges"]').click();
+  await new Promise((r) => setTimeout(r, 300));
+  const edges = app.selection.size;
+  document.querySelector('[data-act="new-tray"]').click();
+  await new Promise((r) => setTimeout(r, 800));
+  document.querySelector('.tray-rename')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await new Promise((r) => setTimeout(r, 200));
+
+  const st = app.session.state;
+  const tray = [...st.trays.values()].at(-1);
+  const b = app.trayFootprint(tray.id);
+
+  // Counted here rather than read back from the app, so this is not the code under test
+  // grading its own work: a bug that made `lastTrayWasClear` always true would pass that
+  // and fail this.
+  let sittingOn = 0;
+  for (const cluster of st.clusters.values()) {
+    if (st.trayOfCluster.has(cluster.id)) continue;
+    const c = app.clusterBox(cluster.id);
+    if (!c) continue;
+    if (b.x < c.maxX && b.x + b.w > c.minX && b.y < c.maxY && b.y + b.h > c.minY) sittingOn++;
+  }
+  return { edges, filed: tray ? tray.clusters.length : 0, appSaysClear: app.lastTrayWasClear, sittingOn };
+});
+check('sorting the edges files them all in one tray', trayPlacement.filed === trayPlacement.edges && trayPlacement.filed > 10, `${trayPlacement.filed} of ${trayPlacement.edges}`);
+check('and the tray lands clear of every loose piece', trayPlacement.sittingOn === 0 && trayPlacement.appSaysClear === true, `${trayPlacement.sittingOn} piece(s) underneath`);
+
+// A second and a third tray must each find their own space rather than stacking onto the
+// scatter once the easy spot is taken.
+const moreTrays = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const results = [];
+  for (let i = 0; i < 3; i++) {
+    document.querySelector('[data-act="new-tray"]').click();
+    await new Promise((r) => setTimeout(r, 500));
+    document.querySelector('.tray-rename')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    results.push(app.lastTrayWasClear);
+  }
+  return { results, trays: app.session.state.trays.size };
+});
+check('and so does every tray after it', moreTrays.results.every(Boolean), moreTrays.results.join(', '));
+check('and they are separate trays, not one reused', moreTrays.trays >= 4, `${moreTrays.trays} trays`);
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 
