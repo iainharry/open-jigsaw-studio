@@ -1,0 +1,9 @@
+{
+  "world-map.webp":       { "title": "Our Earth", "note": "Continents, oceans and key features" },
+  "solar-system.webp":    { "title": "Our Solar System", "note": "Planets, moons and orbits" },
+  "flower-parts.webp":    { "title": "Parts of a Flower", "note": "Monocot and dicot, compared" },
+  "times-tables.webp":    { "title": "Multiplication Tables", "note": "1 to 12" },
+  "maths-symbols.webp":   { "title": "Maths Symbols and Fractions", "note": "Signs, and fractions as decimals" },
+  "reading-a-clock.webp": { "title": "How to Read a Clock", "note": "Analogue, digital and compass points" },
+  "alphabet-shapes.webp": { "title": "Alphabet and Shapes", "note": "Letters, and polygons from 3 to 12 sides" }
+}

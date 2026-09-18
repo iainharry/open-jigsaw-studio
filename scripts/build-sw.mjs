@@ -33,13 +33,31 @@ async function walk(dir) {
   return out;
 }
 
-const files = (await walk(DIST))
+/**
+ * Sample pictures are served but not precached.
+ *
+ * Precaching everything in `dist` was right while `dist` was the app. It stopped being
+ * right when a folder of classroom posters arrived: 1.3 MB that every visitor would
+ * download on first load, offline-first, whether or not they ever opened one. The fetch
+ * handler below is cache-first, so a sample is cached the moment somebody actually uses
+ * it — and is then available offline for good.
+ *
+ * The manifest is precached, because it is a few hundred bytes and it is what lets the
+ * gallery draw itself at all when there is no network.
+ */
+const deferred = (f) => f.startsWith('samples/') && !f.endsWith('.json');
+
+const all = (await walk(DIST))
   .map((f) => relative(DIST, f).split('\\').join('/'))
   .filter((f) => f !== 'sw.js' && !f.endsWith('.map'));
+const files = all.filter((f) => !deferred(f));
 
 // Build id from the contents, so an identical rebuild does not churn every client's cache.
+// Hashed over *everything*, deferred pictures included: adding a sample should still
+// produce a new build id, or a client that has cached the old manifest keeps showing the
+// old list.
 const hash = createHash('sha256');
-for (const name of files.sort()) {
+for (const name of all.sort()) {
   hash.update(name);
   hash.update(await readFile(join(DIST, name)));
 }
@@ -105,4 +123,7 @@ self.addEventListener('fetch', (event) => {
 `;
 
 await writeFile(join(DIST, 'sw.js'), sw);
-console.log(`sw.js written — build ${buildId}, ${files.length} assets precached`);
+console.log(
+  `sw.js written — build ${buildId}, ${files.length} assets precached, ` +
+    `${all.length - files.length} sample picture(s) fetched on demand`,
+);

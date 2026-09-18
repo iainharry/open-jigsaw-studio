@@ -21,3 +21,4 @@ export * from './serialize.js';
 export * from './packing.js';
 export * from './challenge.js';
 export * from './glyphs.js';
+export * from './pictureDetail.js';

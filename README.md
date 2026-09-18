@@ -3,7 +3,7 @@
 An open-source, local-first, cross-platform digital jigsaw studio. Works fully offline.
 No account, no server, no network.
 
-**Status: M18.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
+**Status: M19.** Import a picture, crop and straighten it, cut it into 12–2,000 pieces,
 drag, snap, rotate, multi-select, gather the edges, sort by colour, file pieces into named
 trays, and keep a library of puzzles. Cut shape pieces instead — L's, T's, crosses and the
 twelve pentominoes — into a rectangle, diamond, oval, cross or frame, with or without a
@@ -12,8 +12,8 @@ the shape rather than a picture of it. Share a shape puzzle as a short code that
 the identical board with no account and no server, print it as a cut-out worksheet, and see a difficulty worked out
 from how the puzzle actually behaves rather than from how many pieces it has. Installs as
 an app and runs completely offline, with no runtime dependencies and no account. Fold the
-toolbar away for the whole screen on a tablet, and read or save a user guide generated from
-the app itself.
+toolbar away for the whole screen on a tablet, read or save a user guide generated from the
+app itself, and start from one of the classroom pictures that come with it.
 
 ## Install it
 
@@ -343,6 +343,19 @@ Chromium with software rendering, 1600x1000 viewport. Real hardware is faster.
 Full table, including the zoomed-in case where culling removes 95% of the work, is in
 `ARCHITECTURE.md`.
 
+## Adding a picture to the ones that ship with the app
+
+Drop an image into `public/samples/` and rebuild. `scripts/build-samples.mjs` scans the
+folder and writes the manifest, so there is no list to edit — the title comes from the
+filename (`world-map.webp` → "Our Earth" only because `titles.json` says so; without an
+entry it would be "World map"). Optional per-file `title`, `note` and `credit` go in
+`public/samples/titles.json`.
+
+WebP at quality 88 is what the bundled set uses: the seven posters are 1.3 MB together
+where the PNG originals were 11.4 MB, and the difference is invisible at 4x zoom. Sample
+pictures are deliberately **not** precached, so they cost a visitor nothing until they open
+one.
+
 ## Roadmap
 
 Done: the puzzle engine, selection and rotation, the library, zoom controls, piece trays,
@@ -351,11 +364,11 @@ preparation, assistance levels, notes/difficulty/history, appearance, autosave a
 completes the original brief — a second cut that makes shape pieces, named groups, free-form
 solving, pentominoes and outlines, keyboard play, and then challenge codes, printable
 worksheets, measured difficulty, a playtest recorder, and letter, number and shape
-outlines, a foldaway toolbar and a generated user guide.
+outlines, a foldaway toolbar, a generated user guide, and bundled pictures.
 
 Deliberately deferred: tags and search, which solve a problem a five-puzzle library does
 not have, and a TV/remote-control interface, which is a different input model rather than a
-layout change. `ARCHITECTURE.md` §32 lists what is deliberately not built.
+layout change. `ARCHITECTURE.md` §33 lists what is deliberately not built.
 
 The most useful next step is not a feature. `docs/playtest.md` is the protocol for
 watching somebody who has never seen the app try to use it; every fault worth fixing so far

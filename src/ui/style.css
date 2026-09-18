@@ -1026,3 +1026,67 @@ body {
   border-radius: 8px;
   background: var(--paper, #fff);
 }
+
+/* ---- Pictures that come with the app ---------------------------------------
+   A horizontal strip above the saved puzzles: these are a starting point, not
+   the thing somebody came to the panel for. */
+.samples {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--sunken);
+}
+
+.samples > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sample-list {
+  display: grid;
+  /* Wraps rather than scrolling sideways. A horizontal scroller hides half its
+     contents on a tablet and gives no sign that it has. */
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sample-card {
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--control);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.sample-card:hover,
+.sample-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.sample-card img {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--sunken);
+  display: block;
+}
+
+.sample-card strong {
+  font-size: 12.5px;
+  line-height: 1.25;
+}
+
+.sample-card span {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+}

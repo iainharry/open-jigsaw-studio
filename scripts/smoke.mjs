@@ -2155,6 +2155,86 @@ check('and follows the app theme when read inside the app', guide.panelThemed ==
 check('while a saved copy follows the reader\'s own device', guide.savedFollowsReader === true);
 await page.evaluate(() => document.querySelector('[data-act="close-guide"]').click());
 
+// 22. Pictures that come with the app. The list is fetched from a manifest the build
+// writes by scanning a folder, so the check is that the app shows what is in the folder --
+// not that a hard-coded list rendered.
+const samples = await page.evaluate(async () => {
+  // Earlier sections leave the app cutting colours-only shape puzzles. These checks are
+  // about a photograph, so the cut is put back first -- otherwise this silently tests
+  // something else and passes.
+  const reset = (sel, v) => { const e = document.querySelector(sel); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
+  reset('.rules', 'match');
+  reset('.cut', 'classic');
+  reset('.picture-mode', 'photo');
+  reset('.silhouette', 'rectangle');
+  await new Promise((r) => setTimeout(r, 2000));
+  document.querySelector('[data-act="library"]').click();
+  await new Promise((r) => setTimeout(r, 1400));
+  const manifest = await (await fetch(`${'/open-jigsaw-studio/'}samples/index.json`)).json();
+  const cards = [...document.querySelectorAll('.sample-card')];
+  return {
+    inManifest: manifest.samples.length,
+    onScreen: cards.length,
+    allTitled: cards.every((c) => (c.querySelector('strong')?.textContent ?? '').length > 2),
+    picturesLoaded: cards.filter((c) => c.querySelector('img')?.naturalWidth > 0).length,
+    firstBox: cards[0]?.getBoundingClientRect().width ?? 0,
+    files: manifest.samples.map((s) => s.file),
+  };
+});
+check('every bundled picture reaches the gallery', samples.onScreen === samples.inManifest && samples.onScreen >= 7, `${samples.onScreen} of ${samples.inManifest}`);
+check('and each has a readable name', samples.allTitled === true);
+check('and the pictures actually load', samples.picturesLoaded === samples.onScreen, `${samples.picturesLoaded} of ${samples.onScreen}`);
+check('and the cards are on screen at a usable size', samples.firstBox > 100, `${Math.round(samples.firstBox)}px wide`);
+
+// Opening one has to cut a real puzzle from it, not merely set a title.
+const opened = await page.evaluate(async () => {
+  document.querySelector('.pieces').value = '100';
+  document.querySelector('[data-sample="world-map.webp"]').click();
+  await new Promise((r) => setTimeout(r, 4000));
+  const app = globalThis.__ojs;
+  return {
+    title: app.session.record.title,
+    pieces: app.session.state.geometry.pieces.length,
+    width: app.session.image.width,
+    libraryClosed: document.querySelector('.library').hidden,
+  };
+});
+check('choosing a picture cuts a puzzle from it', opened.pieces > 50 && opened.width > 800, `${opened.pieces} pieces from a ${opened.width}px picture`);
+check('and names the puzzle after the picture', /Earth/.test(opened.title), opened.title);
+check('and closes the panel rather than leaving it over the board', opened.libraryClosed === true);
+
+// The samples are deliberately not precached: an offline-first app should not push a
+// megabyte of posters at a visitor who may never open one.
+const swText = await page.evaluate(() => fetch('./sw.js').then((r) => r.text()));
+const precached = (swText.match(/"\.\/samples\/[^"]+"/g) ?? []);
+check('samples are kept out of the offline precache', precached.every((p) => p.endsWith('.json"')), precached.join(' ') || 'none listed');
+check('but the manifest is precached, so the gallery draws offline', swText.includes('samples/index.json'));
+
+// 23. The blank-piece warning. Two thresholds, because with tabs the geometry settles what
+// the picture cannot and with flat edges it does not. The app's own demo picture measures
+// 27% at its default count -- a warning that fires there is one nobody reads twice.
+const blanks = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const set = (sel, v) => { const e = document.querySelector(sel); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
+  const g = () => app.session.state.geometry;
+
+  set('.picture-mode', 'photo');
+  set('.cut', 'classic');
+  document.querySelector('.pieces').value = '100';
+  document.querySelector('.pieces').dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 3000));
+  const tabbed = { status: document.querySelector('.status').textContent, measured: app.blankFraction(app.shown, g().imageWidth, g().imageHeight, g().rows, g().cols) };
+
+  set('.cut', 'shapes');
+  set('.poly-edges', 'flat');
+  await new Promise((r) => setTimeout(r, 3500));
+  const flat = { status: document.querySelector('.status').textContent };
+  return { tabbed, flat };
+});
+check('a plain picture is measured, not guessed at', blanks.tabbed.measured > 0.05 && blanks.tabbed.measured < 1, `${Math.round(blanks.tabbed.measured * 100)}% blank repeats`);
+check('and tabs stay quiet about it, because the shapes settle it', !/blank/.test(blanks.tabbed.status), blanks.tabbed.status.slice(0, 60));
+check('while flat edges say so, because the picture is the only clue', /blank and have identical twins/.test(blanks.flat.status), blanks.flat.status.slice(0, 80));
+
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');
 

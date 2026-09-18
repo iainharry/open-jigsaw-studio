@@ -33,6 +33,9 @@ import {
   type ColourGroup,
   isComplete,
   pieceCountLimits,
+  measureDetail,
+  BLANKS_WITH_TABS,
+  BLANKS_WITH_FLAT_EDGES,
   pieceEdgePixels,
   progress,
   randomSeed,
@@ -72,6 +75,14 @@ import { PointerInput, type Tool } from '../input/pointer.js';
 import { PrepareView } from './prepare.js';
 import { Playtest } from './playtest.js';
 import { buildGuide, collectControls } from './guide.js';
+
+/** One picture in `public/samples/index.json`, as `scripts/build-samples.mjs` writes it. */
+interface SampleEntry {
+  readonly file: string;
+  readonly title: string;
+  readonly note?: string;
+  readonly credit?: string;
+}
 import { renderEdited } from '../render/applyEdit.js';
 import { Renderer } from '../render/renderer.js';
 import { makeColourBoard } from '../render/colourBoard.js';
@@ -227,6 +238,7 @@ export class App {
     swatch: HTMLElement;
     importFile: HTMLInputElement;
     libNote: HTMLElement;
+    sampleList: HTMLElement;
     ghost: HTMLInputElement;
     hints: HTMLButtonElement;
     hintFind: HTMLButtonElement;
@@ -261,6 +273,9 @@ export class App {
     chOpen: HTMLInputElement;
     chNote: HTMLElement;
   };
+
+  /** The bundled pictures, once the manifest has been fetched. Null means not yet. */
+  private samples: SampleEntry[] | null = null;
 
   /** Folder that receives a .jigsaw copy on every save, if one has been chosen. */
   private backupHandle: Awaited<ReturnType<typeof getStoredFolder>> = null;
@@ -611,6 +626,10 @@ export class App {
               </span>
             </div>
             <p class="lib-note"></p>
+            <details class="samples" open>
+              <summary data-help="Pictures that come with the app. Choosing one cuts a new puzzle from it. They are downloaded the first time you open one, then kept for offline use.">Pictures that come with the app</summary>
+              <div class="sample-list"></div>
+            </details>
             <div class="lib-list"></div>
           </div>
         </div>
@@ -681,6 +700,7 @@ export class App {
       swatch: q<HTMLElement>('.swatch'),
       importFile: q<HTMLInputElement>('.import-file'),
       libNote: q<HTMLElement>('.lib-note'),
+      sampleList: q<HTMLElement>('.sample-list'),
       ghost: q<HTMLInputElement>('.ghost'),
       hints: q<HTMLButtonElement>('[data-act="hints"]'),
       hintFind: q<HTMLButtonElement>('.hint-find'),
@@ -761,6 +781,11 @@ export class App {
     this.els.pieces.value = '100';
 
     this.root.addEventListener('click', (e) => {
+      const sample = (e.target as HTMLElement).closest<HTMLElement>('[data-sample]');
+      if (sample) {
+        void this.openSample(sample.dataset['sample']!);
+        return;
+      }
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
       if (act) this.playtest.add('press', act);
       if (act === 'new') void this.newPuzzle();
@@ -1194,11 +1219,34 @@ export class App {
 
     const made = state.geometry.pieces.length;
     const edge = Math.round(pieceEdgePixels(cutW, cutH, made));
+
+    /**
+     * A warning the resolution cap cannot give.
+     *
+     * Only for puzzles big enough for it to matter, and only when the picture is genuinely
+     * short of information -- see `pictureDetail.ts` for why the thresholds differ so much
+     * between the two cuts, and for the demo landscape that disproved the first design.
+     */
+    const flatCut = shapes && flatEdges;
+    const blanks =
+      colours || made < 60 ? 0 : this.blankFraction(shown, cutW, cutH, rows, cols);
+    const tooPlain = blanks > (flatCut ? BLANKS_WITH_FLAT_EDGES : BLANKS_WITH_TABS);
     // Every one of these lines is about how much *picture* a piece is carrying, so none
     // of them applies without one: a colours-only board is drawn at whatever size it is
     // played at, and quoting the resolution of the photograph it does not use was simply
     // reporting a constraint that had been removed two lines earlier.
-    if (glyph && made > requested * 1.25) {
+    if (tooPlain && flatCut) {
+      this.setStatus(
+        `${made} pieces, but about ${Math.round(blanks * 100)}% of them are blank and have ` +
+          `identical twins. With flat edges the picture is the only clue there is, so those ` +
+          `are guesswork — fewer pieces, or Edges set to Tabs, would make this a fair puzzle.`,
+      );
+    } else if (tooPlain) {
+      this.setStatus(
+        `${made} pieces, about ${edge}px each. Around ${Math.round(blanks * 100)}% are blank ` +
+          `and repeat, so they go in by their shape rather than by the picture.`,
+      );
+    } else if (glyph && made > requested * 1.25) {
       // The grid was raised for legibility, so the piece count is not the one that was
       // asked for. Saying nothing would look like the Pieces menu being ignored, and the
       // reason is not guessable: an 8 has three horizontal strokes and two holes, and
@@ -3110,8 +3158,120 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
 
   // --- Library --------------------------------------------------------------
 
+  /**
+   * Pictures that ship with the app.
+   *
+   * The list is fetched rather than compiled in, so adding a picture is dropping a file
+   * into `public/samples/` and rebuilding — no source file to edit and no list to forget.
+   * `scripts/build-samples.mjs` writes the manifest by scanning that folder.
+   *
+   * Rendered into My puzzles rather than behind a toolbar button of its own. The toolbar
+   * was a quarter of a tablet's screen until the milestone before this one, and this is
+   * "choose something to play", which is what My puzzles is already for.
+   */
+  /**
+   * How much of this cut is blank pieces with identical twins.
+   *
+   * `pieceCountLimits()` asks how small a piece may get before it is more tab than
+   * picture, and only looks at resolution. It has nothing to say about a poster with a
+   * large flat background, which passes at two thousand pieces and then hands over dozens
+   * of identical squares.
+   *
+   * Measured at the grid actually being cut rather than searched across every count on the
+   * menu: one measurement instead of five, and it describes the puzzle in front of the
+   * person rather than a hypothetical one.
+   */
+  private blankFraction(image: CanvasImageSource, width: number, height: number, rows: number, cols: number): number {
+    // Measured on a reduced copy. Flatness survives downscaling -- a blank region is blank
+    // at any size -- and a 5000px photograph would otherwise cost a full-resolution read.
+    const scale = Math.min(1, 900 / Math.max(width, height));
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return 0;
+    ctx.drawImage(image, 0, 0, w, h);
+    try {
+      // Zero on failure, not a guess: a tainted canvas cannot be read, and no measurement
+      // has to mean no warning rather than a warning made up.
+      return measureDetail(ctx.getImageData(0, 0, w, h).data, w, h, rows, cols).interchangeable;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async refreshSamples(): Promise<void> {
+    const list = this.els.sampleList;
+    if (this.samples === null) {
+      list.innerHTML = '<p class="lib-empty">Loading…</p>';
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}samples/index.json`);
+        if (!response.ok) throw new Error(String(response.status));
+        const parsed = (await response.json()) as { samples?: SampleEntry[] };
+        this.samples = Array.isArray(parsed.samples) ? parsed.samples : [];
+      } catch {
+        // The manifest is precached, so this means a first visit with no network. The
+        // saved puzzles below are unaffected, so the panel stays useful.
+        this.samples = [];
+        list.innerHTML =
+          '<p class="lib-empty">The pictures that come with the app need a connection the first time. Your saved puzzles are below.</p>';
+        return;
+      }
+    }
+
+    list.innerHTML = '';
+    if (this.samples.length === 0) {
+      list.innerHTML = '<p class="lib-empty">No pictures are bundled with this build.</p>';
+      return;
+    }
+
+    for (const sample of this.samples) {
+      const card = document.createElement('button');
+      card.className = 'sample-card';
+      card.type = 'button';
+      card.dataset['sample'] = sample.file;
+
+      const img = document.createElement('img');
+      img.src = `${import.meta.env.BASE_URL}samples/${sample.file}`;
+      // Lazy, because the whole point of not precaching these is that a visitor who
+      // never opens the panel never pays for them.
+      img.loading = 'lazy';
+      img.alt = '';
+      const title = document.createElement('strong');
+      title.textContent = sample.title;
+      card.append(img, title);
+      if (sample.note) {
+        const note = document.createElement('span');
+        note.textContent = sample.note;
+        card.append(note);
+      }
+      list.append(card);
+    }
+  }
+
+  /** Cut a new puzzle from one of the bundled pictures. */
+  private async openSample(file: string): Promise<void> {
+    const sample = this.samples?.find((s) => s.file === file);
+    this.setStatus(`Opening ${sample?.title ?? 'sample'}…`);
+    try {
+      const response = await fetch(`${import.meta.env.BASE_URL}samples/${file}`);
+      if (!response.ok) throw new Error(`the picture could not be fetched (${response.status})`);
+      const blob = await response.blob();
+      this.closeLibrary();
+      await this.adoptImage(blob, sample?.title ?? file.replace(/\.[^.]+$/, ''));
+    } catch (err) {
+      this.setStatus(
+        `Could not open that picture: ${(err as Error).message}. ` +
+          `Pictures that come with the app are downloaded the first time you use them, so this needs a connection once.`,
+      );
+    }
+  }
+
   private async openLibrary(): Promise<void> {
     await this.save();
+    void this.refreshSamples();
     const records = await listPuzzles().catch(() => [] as PuzzleRecord[]);
     // One read for the whole library rather than one per card.
     const haveImage = await storedImageHashes().catch(() => null);

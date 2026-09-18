@@ -7,11 +7,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc --noEmit && vite build && node scripts/build-sw.mjs",
+    "build": "node scripts/build-samples.mjs && tsc --noEmit && vite build && node scripts/build-sw.mjs",
     "preview": "vite preview --host",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "samples": "node scripts/build-samples.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",

@@ -1206,7 +1206,60 @@ gain one to make a document every browser already prints.
 The panel copy is pinned to the app's theme so it does not flash white against a dark
 board; a saved copy carries no theme, because it then belongs to whoever opens it.
 
-## 32. Known limitations after M2
+## 32. Bundled pictures, and measuring what a picture can carry (M19)
+
+Seven classroom posters now ship with the app, and adding an eighth is dropping a file into
+`public/samples/`. The manifest is written by `scripts/build-samples.mjs`, which scans that
+folder — a hand-kept list is a list to forget, and the failure is silent: the file sits
+there and never appears, with nothing to say why. Titles come from filenames; anything a
+filename cannot carry goes in an optional `titles.json` beside the images.
+
+**WebP, at quality 88.** As PNG the seven came to 11.4 MB. As WebP they are 1.3 MB, and at
+4× zoom on the most text-heavy of them the two are indistinguishable — a palette-reduced
+PNG both dithered the text and came out larger. **They are not precached.** Precaching all
+of `dist` was right while `dist` was the app; it stopped being right the day a folder of
+posters arrived, because every visitor would then download 1.3 MB offline-first whether or
+not they ever opened one. The service worker is cache-first, so a picture is kept the
+moment somebody uses it. The manifest *is* precached, because it is what lets the gallery
+draw itself with no network.
+
+### The measurement, and the rationale I invented
+
+`pieceCountLimits()` asks how small a piece may get before it is more tab than picture, and
+looks only at resolution. A 1536×1024 poster passes at two thousand pieces and then hands
+over dozens of identical blank squares. The number that matters is not how many pieces are
+blank but how many are blank **and have identical twins**: those cannot be placed by
+looking at them.
+
+Measured at five hundred pieces, the seven posters ran from 6% (the times tables, whose
+coloured cards tile the whole sheet) to 38% (the alphabet sheet, a third of which is cream
+background). I had predicted the times tables would be worst.
+
+Two things then went wrong, and both are worth keeping.
+
+**The first design prescribed a piece count.** Pointed at the app's own demo landscape, it
+rated it the worst picture in the project — 27% at a hundred pieces, 53% at five hundred,
+because its hills are large flat silhouettes. That image has been the default for eighteen
+milestones without complaint. The measurement is right; a 500-piece cut of it really would
+be a great many identical near-black pieces. What was wrong was presuming to name a number,
+loudly enough to fire on the default picture at the default count — a warning nobody reads
+twice. It reports the measured fact now and leaves the judgement alone.
+
+**The second is a rationale that fitted the numbers and was not true.** Tightening the
+same-colour threshold from 10 to 4, and requiring a *crowd* rather than a pair, I wrote
+that this was what distinguished a gradient sky from a flat fill. It is not. A gradient
+shading down a picture gives rows of identical cells and is every bit as interchangeable as
+a fill; the change altered the landscape's rating not at all. What makes that picture
+playable is texture — stars and tree silhouettes leave most cells busy. The test that now
+guards this originally asserted the invented version and failed, which is the only reason
+it was caught.
+
+Two thresholds, because the same board is two different puzzles: **0.35 with tabs**, where
+exactly one socket accepts a piece and the geometry settles what the picture cannot, and
+**0.22 with flat edges**, where the picture is the only clue there is. The tabbed number is
+the softer judgement and is offered as such.
+
+## 33. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.
