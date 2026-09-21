@@ -331,10 +331,17 @@ ${zoneMap()}
 <li><b>Help mode.</b> Press <b>?</b>, then touch any control to read what it does. It is the
 same text as the reference at the end of this guide, and it is always up to date. Press
 <kbd>Esc</kbd> to leave.</li>
-<li><b>Full board.</b> On a tablet the toolbar takes about a quarter of the screen. Press
-<b>Full board</b> in the View zone (or <kbd>F</kbd>) to fold it away entirely; a small tab
-stays at the top of the board to bring it back. On a 500-piece puzzle this is the
-difference between pieces at 23 pixels and pieces at 35.</li>
+<li><b>Hide toolbar.</b> On a tablet the toolbar takes about a quarter of the screen. Press
+<b>Hide toolbar</b> in the View zone (or <kbd>F</kbd>) to fold it away entirely. On a
+500-piece puzzle this is the difference between pieces at 23 pixels and pieces at 35.
+There are three ways back, so you cannot get stuck: the <b>▾ Toolbar</b> tab at the top of
+the board, your device's <b>Back</b> button, or <kbd>F</kbd> again. It is a different
+button from <b>Fit board</b> beside it, which changes the zoom rather than the layout.</li>
+<li><b>Joined pieces have weight.</b> A single loose piece follows your finger straight
+away. A group of joined pieces needs a deliberate movement — up to about a centimetre —
+before it starts to follow, and the bigger the group the more it asks for. This is on
+purpose: resting a thumb on the part you have already solved should not drag it off the
+picture. It never refuses to move, it only asks you to mean it.</li>
 </ul>
 
 <h2>Doing things</h2>

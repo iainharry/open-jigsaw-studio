@@ -1,39 +1,81 @@
 {
   "samples": [
     {
-      "file": "alphabet-shapes.webp",
-      "title": "Alphabet and Shapes",
-      "note": "Letters, and polygons from 3 to 12 sides"
+      "file": "numbers-and-money/Australian Currency.webp",
+      "title": "Australian Coins",
+      "group": "Numbers and money",
+      "note": "Six coins, their values, and why size is not value"
     },
     {
-      "file": "flower-parts.webp",
-      "title": "Parts of a Flower",
-      "note": "Monocot and dicot, compared"
+      "file": "numbers-and-money/Dollar Notes.webp",
+      "title": "Australian Banknotes",
+      "group": "Numbers and money",
+      "note": "Five denominations, and what is on each"
     },
     {
-      "file": "maths-symbols.webp",
+      "file": "numbers-and-money/Measurement.webp",
+      "title": "Measuring with Everyday Things",
+      "group": "Numbers and money",
+      "note": "Length, mass and duration in informal units"
+    },
+    {
+      "file": "numbers-and-money/Number Sentences.webp",
+      "title": "Number Sentences",
+      "group": "Numbers and money",
+      "note": "Add, subtract and equals, with word problems"
+    },
+    {
+      "file": "numbers-and-money/maths-symbols.webp",
       "title": "Maths Symbols and Fractions",
+      "group": "Numbers and money",
       "note": "Signs, and fractions as decimals"
     },
     {
-      "file": "reading-a-clock.webp",
+      "file": "numbers-and-money/reading-a-clock.webp",
       "title": "How to Read a Clock",
+      "group": "Numbers and money",
       "note": "Analogue, digital and compass points"
     },
     {
-      "file": "solar-system.webp",
-      "title": "Our Solar System",
-      "note": "Planets, moons and orbits"
-    },
-    {
-      "file": "times-tables.webp",
+      "file": "numbers-and-money/times-tables.webp",
       "title": "Multiplication Tables",
+      "group": "Numbers and money",
       "note": "1 to 12"
     },
     {
-      "file": "world-map.webp",
+      "file": "our-world/flower-parts.webp",
+      "title": "Parts of a Flower",
+      "group": "Our world",
+      "note": "Monocot and dicot, compared"
+    },
+    {
+      "file": "our-world/solar-system.webp",
+      "title": "Our Solar System",
+      "group": "Our world",
+      "note": "Planets, moons and orbits"
+    },
+    {
+      "file": "our-world/world-map.webp",
       "title": "Our Earth",
+      "group": "Our world",
       "note": "Continents, oceans and key features"
+    },
+    {
+      "file": "shapes-and-space/Space.webp",
+      "title": "Shapes and Space",
+      "group": "Shapes and space",
+      "note": "2D and 3D shapes, simple maps, slides, flips and turns"
+    },
+    {
+      "file": "shapes-and-space/alphabet-shapes.webp",
+      "title": "Alphabet and Shapes",
+      "group": "Shapes and space",
+      "note": "Letters, and polygons from 3 to 12 sides"
+    },
+    {
+      "file": "Health Symbols.webp",
+      "title": "Health and Safety Symbols",
+      "note": "Signs, messages, and the people who help"
     }
   ]
 }

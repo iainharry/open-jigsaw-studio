@@ -1299,7 +1299,83 @@ the 36 overlap. That measurement is what makes the smoke assertion one that can 
 the assertion counts the pieces under the tray itself rather than reading back the app's
 own verdict.
 
-## 34. Known limitations after M2
+## 34. A mode that removed its own escape hatch (M21)
+
+Reported from a Samsung Galaxy Tab S6: "I can't drag down the top arrow or even see the
+tab's back arrow. I have to close the app using one of the tab's side button, and reopen."
+
+Full board (now **Hide toolbar**) had become a trap, and the interesting part is not the
+three bugs in it but the reasoning that let three bugs add up to one.
+
+**The coupling was the mistake.** M18 also called `requestFullscreen()` whenever the
+pointer was coarse, arguing that on a tablet "the browser's own address bar costs more
+height than this toolbar, so asking for the screen is the same intent as hiding the
+toolbar". That is false on Android, where fullscreen takes the *system navigation bar* as
+well. Hiding the toolbar is reversible inside the app; fullscreen removes the reversal
+that lives outside it. Once the two were welded together, the in-app control was the only
+way back — and it had three separate faults, any one of which was survivable alone:
+
+- it acted on `click`, while the gesture its shape invites is a drag, and a drag that
+  leaves the slop never completes a click;
+- it sat at `top: 0`, where Android immersive mode swallows the first touch to reveal the
+  status bar;
+- at 62×26px and 0.55 opacity it did not read as a control at all.
+
+The rule worth keeping: **a mode must not remove the escape hatch for the mode.** In an
+installed PWA fullscreen buys nothing anyway — there is no address bar — so it was removed
+rather than made conditional.
+
+All three faults are fixed as well: `pointerdown`, a 44px labelled tab inset clear of the
+edge, and a history entry so the device's own Back button undoes it. Three routes back,
+and the smoke test checks the short side of the touch target rather than its area, because
+the old 62×26 tab passes an area test and still misses under a thumb.
+
+**Two buttons one letter apart.** The report says "Fit Board" while describing the
+Full board problem, and they sat side by side in the View zone. One changes the zoom; the
+other changes the layout and used to be hard to leave. Renamed to **Hide toolbar**, which
+also says what it does.
+
+### Weight: the cost of an accident is not the same at both ends
+
+Same report, second issue: a piece dropped onto the assembled part joins it, and then the
+next touch anywhere on that part drags the solved picture off the ghost.
+
+There was no threshold at all — a press on a cluster moved it from the first pixel of
+travel. That is right for one loose piece and wrong for forty joined ones, because the
+repair is not symmetric: nudging one piece three pixels costs nothing, and nudging the
+solved half of the puzzle three pixels has to be undone by eye, this app having no undo.
+
+So the effort to start a move now scales with what the move would cost: 2px for a single
+piece, about 10px for four, 26px for sixty-four, capped there. Logarithmic, because the
+point is to make a large move deliberate rather than to make it hard.
+
+**What it deliberately is not is a lock on correctly-placed pieces.** The engine could
+tell — a cluster in its solved place has rotation 0 and translation equal to its pivot —
+but a lock refuses the legitimate nudge too, and nothing in a position distinguishes an
+accident from an intention. Resistance slows the accident without ever refusing the
+intention.
+
+One implementation detail that cost a smoke failure: when the threshold is crossed, the
+pieces must start following from *the point where the resistance was paid*, not from the
+pointer's position in that event. Taking the latter throws away everything that happened
+inside one `pointermove` — invisible when moves arrive every few pixels, and a lost 25px
+lurch when they do not, which was enough to miss a snap and fail section 2.
+
+### Collections are sub-folders, and nothing else
+
+`samples/beach/rockpool.webp` is in the Beach collection because it is in the `beach`
+folder. No list of collections to keep in step with the files, for the same reason the file
+list itself is scanned: a list to edit is a list to forget, and the failure is silent. A
+picture left loose in `samples/` appears under "Everything else", so the seven pictures
+that predate collections carry on working untouched.
+
+One level deep, with a warning for anything nested deeper rather than a silent flatten.
+Filters rather than headings, because on a tablet the gallery is already three cards wide
+and "show me the beach ones" is the actual request. Sample URLs are now encoded per path
+segment — several of the bundled filenames have spaces in them, and an unencoded space is
+the difference between a gallery and thirteen broken images.
+
+## 35. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.
@@ -1309,6 +1385,11 @@ own verdict.
   through save files; nothing calls it yet. Trays (section 13) cover the unconnected case.
 - Trays do not scroll. A tray with two hundred pieces grows tall rather than paging, so a
   very large tray is unwieldy.
+- **No undo.** Nothing in the app can be taken back: an accidental drag, a shuffle, a tray
+  emptied. M21 added resistance to the most expensive accident rather than a way to undo
+  it, which is a mitigation and not a fix. A snapshot ring of serialised cluster and tray
+  positions would do it — geometry is regenerated from the seed, so a snapshot is small —
+  and a partial undo that silently covered moves but not joins would be worse than none.
 - Sorting is by colour and by edge only. Sorting by image *region* (sky, foreground,
   subject) would need segmentation and is not obviously better than colour for the job.
 - Colour groups are computed from a mean per piece, so a piece split evenly between two

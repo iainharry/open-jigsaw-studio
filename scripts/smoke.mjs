@@ -2081,18 +2081,42 @@ const fullBoard = await page.evaluate(async () => {
     tabVisible: !document.querySelector('.chrome-tab').hidden && tab.width > 20 && tab.height > 20,
     tabOnScreen: tab.top >= 0 && tab.bottom <= window.innerHeight && tab.left >= 0 && tab.right <= window.innerWidth,
     tabArea: Math.round(tab.width * tab.height),
+    tabShortSide: Math.round(Math.min(tab.width, tab.height)),
+    tabTop: Math.round(tab.top),
+    tabLabel: document.querySelector('.chrome-tab').textContent.trim(),
+    // M21: hiding the toolbar used to take the whole screen as well, which on Android
+    // takes the navigation bar and with it the user's way out.
+    wentFullscreen: !!document.fullscreenElement,
   };
 
-  // Back again, by the tab rather than the button -- that is the only way back once the
-  // toolbar is gone, so it is the path worth testing.
-  document.querySelector('.chrome-tab').click();
+  // Back again, by the tab -- and by *pressing* it rather than clicking it, because the
+  // gesture its shape invites is a drag, and a drag never completes a click. That is
+  // precisely how a Samsung tablet ended up with no way back at all.
+  const el = document.querySelector('.chrome-tab');
+  const box = el.getBoundingClientRect();
+  el.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true,
+    cancelable: true,
+    clientX: box.left + box.width / 2,
+    clientY: box.top + box.height / 2,
+  }));
   await new Promise((r) => setTimeout(r, 350));
   const restored = {
     barVisible: !document.querySelector('.bar').hidden,
     statusBackInBar: !!document.querySelector('.bar .status'),
     board: boardHeight(),
   };
-  return { before, after, restored, windowHeight: window.innerHeight };
+
+  // And the second route: the device's own Back button, for somebody who never finds the
+  // tab. Hide again, then go back in history.
+  document.querySelector('[data-act="full-board"]').click();
+  await new Promise((r) => setTimeout(r, 350));
+  const hiddenAgain = document.querySelector('.bar').hidden;
+  history.back();
+  await new Promise((r) => setTimeout(r, 450));
+  const afterBack = { hiddenAgain, barVisible: !document.querySelector('.bar').hidden };
+
+  return { before, after, restored, afterBack, windowHeight: window.innerHeight };
 });
 check('the toolbar really is a large part of the screen', fullBoard.before.bar >= 100, `${fullBoard.before.bar}px of ${fullBoard.windowHeight}px`);
 check('Full board gives the board more room, not less', fullBoard.after.board > fullBoard.before.board, `${fullBoard.before.board}px -> ${fullBoard.after.board}px`);
@@ -2100,13 +2124,25 @@ check('Full board gives the board more room, not less', fullBoard.after.board > 
 check('and the footer stays a footer', fullBoard.after.footer < 60, `${fullBoard.after.footer}px`);
 check('and pieces get bigger with it', fullBoard.after.piece > fullBoard.before.piece, `${fullBoard.before.piece.toFixed(0)}px -> ${fullBoard.after.piece.toFixed(0)}px per piece`);
 check('the way back is visible and fully on screen', fullBoard.after.tabVisible && fullBoard.after.tabOnScreen);
-// Small enough not to be sitting on the puzzle, big enough for a finger. Apple and
-// Google both put the minimum touch target at 44px on the long side.
-check('and it is a thumb-sized target, not a lid over the board', fullBoard.after.tabArea > 900 && fullBoard.after.tabArea < 4000, `${fullBoard.after.tabArea}px²`);
+// Apple and Google both put the minimum touch target at 44px, and it is the *short* side
+// that has to clear it -- the M18 tab was 62px wide and 26px tall, which passes an area
+// test and still misses under a thumb.
+check('and it clears the 44px touch-target minimum on its short side', fullBoard.after.tabShortSide >= 44, `${fullBoard.after.tabShortSide}px`);
+check('and it is still a tab, not a lid over the board', fullBoard.after.tabArea < 9000, `${fullBoard.after.tabArea}px²`);
+// A control flush against the top edge of an Android app competes with the system's own
+// edge gesture, so the first touch reveals the status bar instead of reaching the button.
+check('and it is inset clear of the screen edge', fullBoard.after.tabTop >= 4, `${fullBoard.after.tabTop}px from the top`);
+// A bare arrow does not read as a button. The word is what makes it one.
+check('and it says what it is', /toolbar/i.test(fullBoard.after.tabLabel), JSON.stringify(fullBoard.after.tabLabel));
+// M21. Fullscreen on Android takes the navigation bar, which is the way out of anything;
+// a mode must not remove the escape hatch for the mode.
+check('hiding the toolbar does not also take the whole screen', fullBoard.after.wentFullscreen === false);
 // Hiding the toolbar hides the status line with it unless it is moved, which would take
 // away every warning the app gives in exchange for some space -- silently.
 check('the status line moves to the footer rather than vanishing', fullBoard.after.statusInFooter === true, fullBoard.after.statusText.slice(0, 50));
-check('and the tab brings everything back', fullBoard.restored.barVisible && fullBoard.restored.statusBackInBar);
+check('and pressing the tab brings everything back', fullBoard.restored.barVisible && fullBoard.restored.statusBackInBar);
+// The route for somebody who never works out that the tab is a button.
+check('and so does the device Back button', fullBoard.afterBack.hiddenAgain === true && fullBoard.afterBack.barVisible === true, `hidden: ${fullBoard.afterBack.hiddenAgain}, back: ${fullBoard.afterBack.barVisible}`);
 
 // 21. The user guide. It is generated from the running app, so the check is that it
 // describes *this* app rather than that a document was produced.
@@ -2179,17 +2215,60 @@ const samples = await page.evaluate(async () => {
     picturesLoaded: cards.filter((c) => c.querySelector('img')?.naturalWidth > 0).length,
     firstBox: cards[0]?.getBoundingClientRect().width ?? 0,
     files: manifest.samples.map((s) => s.file),
+    groups: [...new Set(manifest.samples.map((s) => s.group).filter(Boolean))],
+    chips: [...document.querySelectorAll('.sample-chip')].map((c) => c.textContent.trim()),
+    // A picture inside a collection: its path has a folder in it, and several of the
+    // bundled filenames have spaces, so this is also the URL-encoding check.
+    nested: manifest.samples.find((s) => s.file.includes('/'))?.file ?? null,
   };
 });
 check('every bundled picture reaches the gallery', samples.onScreen === samples.inManifest && samples.onScreen >= 7, `${samples.onScreen} of ${samples.inManifest}`);
 check('and each has a readable name', samples.allTitled === true);
 check('and the pictures actually load', samples.picturesLoaded === samples.onScreen, `${samples.picturesLoaded} of ${samples.onScreen}`);
 check('and the cards are on screen at a usable size', samples.firstBox > 100, `${Math.round(samples.firstBox)}px wide`);
+// Pictures in sub-folders load at all: the paths have folders and spaces in them, and an
+// unencoded space is the difference between a gallery and thirteen broken images.
+check('including the ones in sub-folders, whatever their filenames', samples.nested !== null && samples.picturesLoaded === samples.onScreen, samples.nested ?? 'no sub-folder in this build');
+
+// 22b. Collections. Sub-folders are the only definition of a collection, so the check is
+// that the folders in the build turn into filters that actually filter -- not that some
+// chips were drawn.
+const collections = await page.evaluate(async () => {
+  const chips = [...document.querySelectorAll('.sample-chip')];
+  const named = chips.find((c) => c.dataset.group !== '' && c.dataset.group !== 'Everything else');
+  if (!named) return { skipped: true };
+  const all = document.querySelectorAll('.sample-card').length;
+  named.click();
+  await new Promise((r) => setTimeout(r, 300));
+  const filtered = [...document.querySelectorAll('.sample-card')].length;
+  const pressed = [...document.querySelectorAll('.sample-chip')].filter((c) => c.getAttribute('aria-pressed') === 'true').map((c) => c.textContent.trim());
+  // Back to everything, so later checks see the whole gallery.
+  document.querySelector('.sample-chip[data-group=""]').click();
+  await new Promise((r) => setTimeout(r, 300));
+  return {
+    skipped: false,
+    name: named.textContent.trim(),
+    all,
+    filtered,
+    pressed,
+    restored: document.querySelectorAll('.sample-card').length,
+  };
+});
+if (collections.skipped) {
+  check('collections: a sub-folder was present to test', false, 'no collection in this build');
+} else {
+  check('the collections in the folder become filters', samples.chips.length === samples.groups.length + 2, `${samples.chips.length} chips for ${samples.groups.length} collections`);
+  check(`choosing "${collections.name}" shows fewer pictures, not none`, collections.filtered > 0 && collections.filtered < collections.all, `${collections.filtered} of ${collections.all}`);
+  check('and exactly one filter reads as chosen', collections.pressed.length === 1 && collections.pressed[0] === collections.name, collections.pressed.join(', '));
+  check('and All puts them all back', collections.restored === collections.all, `${collections.restored} of ${collections.all}`);
+}
 
 // Opening one has to cut a real puzzle from it, not merely set a title.
 const opened = await page.evaluate(async () => {
   document.querySelector('.pieces').value = '100';
-  document.querySelector('[data-sample="world-map.webp"]').click();
+  // Found by name rather than by path, so moving a picture into a collection does not
+  // quietly turn this into a test of nothing.
+  [...document.querySelectorAll('[data-sample]')].find((c) => /world-map\.webp$/.test(c.dataset.sample)).click();
   await new Promise((r) => setTimeout(r, 4000));
   const app = globalThis.__ojs;
   return {
@@ -2302,6 +2381,121 @@ const moreTrays = await page.evaluate(async () => {
 });
 check('and so does every tray after it', moreTrays.results.every(Boolean), moreTrays.results.join(', '));
 check('and they are separate trays, not one reused', moreTrays.trays >= 4, `${moreTrays.trays} trays`);
+
+// 25. Weight. Reported from a tablet: a piece dropped onto the assembled part joins it,
+// and then the next touch anywhere on that part drags the whole solved picture off the
+// ghost. The claim is that effort to start a move scales with what the move would cost,
+// so the check is that the *same* small travel moves one loose piece and does not move a
+// joined group -- and that a deliberate travel still moves the group. Testing one without
+// the other would pass a build that had simply frozen large clusters.
+const weight = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const canvas = document.querySelector('.board');
+
+  // A clean board first. By this point earlier sections have filled it with trays, and a
+  // piece dropped onto a tray joins the tray instead of its neighbour -- which would make
+  // this a test of tray behaviour that happens to mention weight.
+  const sel = document.querySelector('.pieces');
+  sel.value = [...sel.options].map((o) => Number(o.value)).sort((a, b) => a - b)[0].toString();
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  document.querySelector('[data-act="new"]').click();
+  await new Promise((r) => setTimeout(r, 2500));
+  document.querySelector('[data-act="fit-all"]').click();
+  await new Promise((r) => setTimeout(r, 400));
+  const state = app.session.state;
+
+  const rect = canvas.getBoundingClientRect();
+  const worldToScreen = (p) => ({
+    x: (p.x - app.viewport.x) * app.viewport.zoom + rect.width / 2 + rect.left,
+    y: (p.y - app.viewport.y) * app.viewport.zoom + rect.height / 2 + rect.top,
+  });
+  /** Where a piece's centre currently is, in world space. */
+  const pieceWorld = (id) => {
+    const c = state.clusters.get(state.clusterOfPiece[id]);
+    const g = state.geometry.pieces[id];
+    return {
+      x: c.x + (g.solved.x - c.pivotX) + g.bounds.w / 2,
+      y: c.y + (g.solved.y - c.pivotY) + g.bounds.h / 2,
+    };
+  };
+  const raise = (id) => {
+    const c = state.clusters.get(state.clusterOfPiece[id]);
+    const zi = state.zOrder.indexOf(c.id);
+    if (zi >= 0) {
+      state.zOrder.splice(zi, 1);
+      state.zOrder.push(c.id);
+    }
+  };
+  const swipe = async (from, to) => {
+    fireEv(canvas, 'pointerdown', from.x, from.y);
+    for (let i = 1; i <= 14; i++) {
+      fireEv(canvas, 'pointermove', from.x + ((to.x - from.x) * i) / 14, from.y + ((to.y - from.y) * i) / 14);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    fireEv(canvas, 'pointerup', to.x, to.y);
+    await new Promise((r) => setTimeout(r, 160));
+  };
+
+  // Build something to be careless with: piece 0 with its next three neighbours joined
+  // onto it. Four pieces is past the point where the resistance bites, and dragging them
+  // there is itself a drag of hundreds of pixels, so it also proves the resistance is not
+  // simply stopping ordinary play.
+  for (const id of [1, 2, 3]) {
+    const anchor = state.clusters.get(state.clusterOfPiece[0]);
+    const g = state.geometry.pieces[id];
+    const target = {
+      x: anchor.x + (g.solved.x - anchor.pivotX) + g.bounds.w / 2,
+      y: anchor.y + (g.solved.y - anchor.pivotY) + g.bounds.h / 2,
+    };
+    raise(id);
+    await swipe(worldToScreen(pieceWorld(id)), worldToScreen(target));
+  }
+
+  const big = state.clusters.get(state.clusterOfPiece[0]);
+  let lone = null;
+  for (const c of state.clusters.values()) if (c.pieces.length === 1 && !lone) lone = c;
+  if (!big || big.pieces.length < 4 || !lone) return { skipped: true, held: big?.pieces.length ?? 0 };
+
+  const screenOf = (cluster) => worldToScreen(pieceWorld(cluster.pieces[0]));
+
+  // Measured before the release, so a snap, a merge or a tray landing cannot be mistaken
+  // for the drag itself.
+  const nudge = async (cluster, dx) => {
+    const at = screenOf(cluster);
+    const before = { x: cluster.x, y: cluster.y };
+    fireEv(canvas, 'pointerdown', at.x, at.y);
+    const grabbed = app.renderer.highlightClusters?.has(cluster.id) ?? false;
+    // One pixel at a time, the way a finger reports. A test that jumps straight to the
+    // far end would clear any threshold in a single event and prove nothing.
+    for (let i = 1; i <= dx; i++) {
+      fireEv(canvas, 'pointermove', at.x + i, at.y);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const moved = Math.hypot(cluster.x - before.x, cluster.y - before.y);
+    fireEv(canvas, 'pointerup', at.x + dx, at.y);
+    await new Promise((r) => setTimeout(r, 120));
+    return { grabbed, moved };
+  };
+
+  // 6px: a thumb resting, a stylus hand settling, a tablet held in one hand.
+  const loneSmall = await nudge(lone, 6);
+  const bigSmall = await nudge(big, 6);
+  // 60px: somebody who means it. Well past the 26px cap.
+  const bigLarge = await nudge(big, 60);
+  return { skipped: false, held: big.pieces.length, loneSmall, bigSmall, bigLarge };
+}, fire);
+
+if (weight.skipped) {
+  check('weight: a joined group could be assembled to test with', false, `largest cluster had ${weight.held} piece(s)`);
+} else {
+  // If the press never landed on the cluster the movement numbers mean nothing, so this
+  // is asserted first rather than left to be inferred from a zero.
+  check('weight: both presses landed on the intended cluster', weight.loneSmall.grabbed && weight.bigSmall.grabbed && weight.bigLarge.grabbed);
+  check('a small wobble still moves a single loose piece', weight.loneSmall.moved > 0, `moved ${weight.loneSmall.moved.toFixed(1)}`);
+  check(`and the same wobble does not move ${weight.held} joined pieces`, weight.bigSmall.moved === 0, `moved ${weight.bigSmall.moved.toFixed(1)}`);
+  check('but a deliberate drag moves them normally', weight.bigLarge.moved > 0, `moved ${weight.bigLarge.moved.toFixed(1)}`);
+}
 
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');

@@ -45,6 +45,34 @@ export type Tool = 'move' | 'select';
 /** Movement below this many screen pixels counts as a tap, not a drag. */
 const TAP_SLOP = 4;
 
+/**
+ * How far the pointer must travel before held pieces start moving, by how many it holds.
+ *
+ * Until M21 there was no threshold at all: a press on a cluster moved it from the first
+ * pixel of travel. That is right for one loose piece — it should feel weightless — and
+ * badly wrong for the assembled part of the puzzle, because **the cost of an accident is
+ * not the same at both ends**. Nudging one piece three pixels costs nothing. Nudging forty
+ * joined pieces three pixels drags the solved part of the picture off the ghost, and this
+ * app has no undo, so the only repair is to drag it back by eye. Reported from a tablet,
+ * where a resting thumb and a stylus hand make small unintended travel constant.
+ *
+ * So the effort to start a move scales with what the move would cost: 2px for a single
+ * piece, about 10px for four, 26px for sixty-four, and never more than the cap. Logarithmic
+ * rather than linear, because the point is to make a large move *deliberate*, not to make
+ * it hard — a finished 500-piece board should still be draggable without a fight.
+ *
+ * Note what this deliberately is **not**: it is not a lock on correctly-placed pieces. The
+ * engine could tell (a cluster in its solved place has rotation 0 and translation equal to
+ * its pivot), but a lock would also refuse the legitimate nudge, and nothing in a position
+ * distinguishes an accident from an intention. Resistance slows the accident down without
+ * ever refusing the intention.
+ */
+const GRAB_RESISTANCE_CAP = 26;
+function grabResistance(pieces: number): number {
+  if (pieces <= 1) return 2;
+  return Math.min(GRAB_RESISTANCE_CAP, 2 + 4 * Math.log2(pieces));
+}
+
 export interface PointerCallbacks {
   getState(): PuzzleState | null;
   getViewport(): Viewport;
@@ -97,6 +125,10 @@ export class PointerInput {
   private twistAngle = 0;
   private dragTrayId: number | null = null;
   private trayWasHeaderTap = false;
+  /** Screen pixels of travel still owed before the held pieces move. See `grabResistance`. */
+  private dragResistance = 0;
+  /** True once that travel has been paid and the pieces are following the pointer. */
+  private dragArmed = false;
   private detach: Array<() => void> = [];
 
   constructor(
@@ -240,6 +272,12 @@ export class PointerInput {
         this.dragging = [hit.clusterId];
       }
       for (const id of this.dragging) bringToFront(state, id);
+      // Counted over the whole drag set, not the grabbed cluster, because dragging a
+      // selection of six four-piece clusters moves twenty-four pieces.
+      let held = 0;
+      for (const id of this.dragging) held += state.clusters.get(id)?.pieces.length ?? 0;
+      this.dragResistance = grabResistance(held);
+      this.dragArmed = false;
       this.mode = 'drag';
       this.renderer.highlightClusters = new Set(this.dragging);
       this.lastWorld = world;
@@ -292,6 +330,25 @@ export class PointerInput {
 
       case 'drag': {
         const world = this.toWorld(p);
+        if (!this.dragArmed) {
+          // Measured in screen pixels, not world units, so the resistance is the same
+          // physical movement of the finger whatever the zoom.
+          const dx = p.x - this.downScreen.x;
+          const dy = p.y - this.downScreen.y;
+          const travelled = Math.hypot(dx, dy);
+          if (travelled < this.dragResistance) break;
+          this.dragArmed = true;
+          // Follow from the point where the resistance was paid, not from here. Taking
+          // `p` instead would throw away everything that happened in this one event --
+          // fine when moves arrive every few pixels, and a lost 25px lurch when they do
+          // not, which is enough to miss a snap. This way the pieces lag the pointer by
+          // exactly the resistance and by nothing else.
+          const k = this.dragResistance / travelled;
+          this.lastWorld = this.toWorld({
+            x: this.downScreen.x + dx * k,
+            y: this.downScreen.y + dy * k,
+          });
+        }
         moveClusters(state, this.dragging, world.x - this.lastWorld.x, world.y - this.lastWorld.y);
         this.lastWorld = world;
         // Highlight the tray the pieces would land in if released here.
@@ -382,6 +439,7 @@ export class PointerInput {
     }
 
     this.mode = 'idle';
+    this.dragArmed = false;
     this.renderer.highlightClusters = null;
     this.renderer.selectedTray = null;
     this.cb.onChange();

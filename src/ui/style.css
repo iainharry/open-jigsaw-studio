@@ -925,34 +925,51 @@ body {
   display: none !important;
 }
 
-/* The way back into the toolbar. Small, central, and above the board without
-   being big enough to swallow a drag that starts near it. */
+/* The way back into the toolbar.
+
+   M21 rebuilt this after a Samsung tablet made it unreachable. It was 62x26px,
+   0.55 opacity, a bare glyph, flush against `top: 0`. Three things were wrong
+   with that and all three had to be fixed, because in fullscreen there was no
+   second route: 26px is under every touch-target minimum published; a faint
+   unlabelled arrow does not read as a button; and a control at the very top
+   edge of an Android app competes with the system's own edge gesture. It is now
+   a labelled, opaque, 44px target inset clear of the edge.
+
+   It still must not be big enough to swallow a drag that starts near it, which
+   is why it grew downwards and sideways rather than becoming a floating bar. */
 .chrome-tab {
   position: fixed;
-  top: 0;
+  /* Clear of the screen edge, and clear of a notch or rounded corner where the
+     device reports one. The inset is what keeps it out of the strip Android
+     reserves for revealing its own bars. */
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 8;
-  width: 62px;
-  height: 26px;
-  padding: 0;
-  line-height: 24px;
+  min-width: 104px;
+  height: 44px;
+  padding: 0 14px;
+  line-height: 42px;
   font-size: 15px;
+  font-weight: 600;
   border: 1px solid var(--line);
-  border-top: none;
-  border-radius: 0 0 9px 9px;
+  border-radius: 10px;
   background: var(--panel);
-  color: var(--muted);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
   cursor: pointer;
-  /* Faint until touched: it is sitting on the board, so it should not compete with
-     the puzzle for attention while it is not being used. */
-  opacity: 0.55;
+  /* Not faint. It was, on the argument that it should not compete with the
+     puzzle; the person who could not find it was not competing with anything. */
+  opacity: 0.92;
+  /* The gesture this shape invites is a drag. `pointerdown` handles it, and this
+     stops the browser treating the same drag as a pan of the board underneath. */
+  touch-action: none;
 }
 
 .chrome-tab:hover,
 .chrome-tab:focus-visible {
   opacity: 1;
-  color: var(--text);
+  border-color: var(--accent, var(--line));
 }
 
 /* With the toolbar gone the footer carries the status line as well as the stats,
@@ -1051,6 +1068,45 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 8px;
   margin-top: 8px;
+}
+
+/* Collection filters. The gallery is a grid of cards, so the filter row has to be
+   told to span it or it sits in the first column pretending to be a picture. */
+.sample-groups {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.sample-chip {
+  /* 34px: a filter is a small target by nature, but it still has to be hittable with
+     a thumb on a tablet, which is where this gallery is mostly used. */
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--control);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.sample-chip:hover,
+.sample-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* The chosen filter, said with colour *and* weight -- colour alone would be invisible
+   to the colour-blind players section 9 went to some trouble for. */
+.sample-chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #06101d;
+  font-weight: 600;
 }
 
 .sample-card {

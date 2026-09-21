@@ -1,9 +1,21 @@
 {
-  "world-map.webp":       { "title": "Our Earth", "note": "Continents, oceans and key features" },
-  "solar-system.webp":    { "title": "Our Solar System", "note": "Planets, moons and orbits" },
-  "flower-parts.webp":    { "title": "Parts of a Flower", "note": "Monocot and dicot, compared" },
-  "times-tables.webp":    { "title": "Multiplication Tables", "note": "1 to 12" },
-  "maths-symbols.webp":   { "title": "Maths Symbols and Fractions", "note": "Signs, and fractions as decimals" },
-  "reading-a-clock.webp": { "title": "How to Read a Clock", "note": "Analogue, digital and compass points" },
-  "alphabet-shapes.webp": { "title": "Alphabet and Shapes", "note": "Letters, and polygons from 3 to 12 sides" }
+  "world-map.webp":            { "title": "Our Earth", "note": "Continents, oceans and key features" },
+  "solar-system.webp":         { "title": "Our Solar System", "note": "Planets, moons and orbits" },
+  "flower-parts.webp":         { "title": "Parts of a Flower", "note": "Monocot and dicot, compared" },
+  "times-tables.webp":         { "title": "Multiplication Tables", "note": "1 to 12" },
+  "maths-symbols.webp":        { "title": "Maths Symbols and Fractions", "note": "Signs, and fractions as decimals" },
+  "reading-a-clock.webp":      { "title": "How to Read a Clock", "note": "Analogue, digital and compass points" },
+  "alphabet-shapes.webp":      { "title": "Alphabet and Shapes", "note": "Letters, and polygons from 3 to 12 sides" },
+  "Australian Currency.webp":  { "title": "Australian Coins", "note": "Six coins, their values, and why size is not value" },
+  "Dollar Notes.webp":         { "title": "Australian Banknotes", "note": "Five denominations, and what is on each" },
+  "Number Sentences.webp":     { "title": "Number Sentences", "note": "Add, subtract and equals, with word problems" },
+  "Measurement.webp":          { "title": "Measuring with Everyday Things", "note": "Length, mass and duration in informal units" },
+  "Space.webp":                { "title": "Shapes and Space", "note": "2D and 3D shapes, simple maps, slides, flips and turns" },
+  "Health Symbols.webp":       { "title": "Health and Safety Symbols", "note": "Signs, messages, and the people who help" },
+
+  "groups": {
+    "numbers-and-money": "Numbers and money",
+    "shapes-and-space": "Shapes and space",
+    "our-world": "Our world"
+  }
 }

@@ -79,10 +79,33 @@ import { buildGuide, collectControls } from './guide.js';
 
 /** One picture in `public/samples/index.json`, as `scripts/build-samples.mjs` writes it. */
 interface SampleEntry {
+  /** Path under `samples/`, which for a picture in a collection includes its folder. */
   readonly file: string;
   readonly title: string;
+  /** Display name of the collection this picture is in. Absent means it is in none. */
+  readonly group?: string;
   readonly note?: string;
   readonly credit?: string;
+}
+
+/**
+ * A sample's URL.
+ *
+ * Encoded per segment, because sample filenames are whatever somebody dropped in the
+ * folder and several of the bundled ones have spaces in them. `encodeURI` would do for
+ * spaces but leaves `#` and `?` alone, and one picture called `what now?.webp` would then
+ * fetch the whole folder with an empty query.
+ */
+/**
+ * The filter that means "the pictures in no collection".
+ *
+ * A sentinel rather than an empty string, because empty already means "no filter at all".
+ * It is a display name too, so it reads correctly on the chip without a second lookup.
+ */
+const OTHER_SAMPLES = 'Everything else';
+
+function sampleUrl(file: string): string {
+  return `${import.meta.env.BASE_URL}samples/${file.split('/').map(encodeURIComponent).join('/')}`;
 }
 import { renderEdited } from '../render/applyEdit.js';
 import { Renderer } from '../render/renderer.js';
@@ -288,6 +311,12 @@ export class App {
   /** The bundled pictures, once the manifest has been fetched. Null means not yet. */
   private samples: SampleEntry[] | null = null;
 
+  /** Which collection the picture gallery is filtered to. Empty means all of them. */
+  private sampleGroup = '';
+
+  /** True while a history entry is standing in for "the toolbar is hidden". See setChrome. */
+  private chromeHistoryEntry = false;
+
   /** Folder that receives a .jigsaw copy on every save, if one has been chosen. */
   private backupHandle: Awaited<ReturnType<typeof getStoredFolder>> = null;
 
@@ -453,7 +482,7 @@ export class App {
           <button class="btn" data-act="shuffle" data-help="Break everything apart and scatter it again. The picture and piece count stay the same.">Shuffle</button>
           </span>
           <span class="group" data-zone="View">
-            <button class="btn" data-act="full-board" data-help="Fold the whole toolbar away so the board has the screen. On a tablet the toolbar is more than a quarter of the height. A small tab stays at the top of the board to bring it back — or press F.">Full board</button>
+            <button class="btn" data-act="full-board" data-help="Fold the whole toolbar away so the board has the screen. On a tablet the toolbar is more than a quarter of the height. A labelled tab stays at the top of the board to bring it back; your device's Back button and the F key also bring it back.">Hide toolbar</button>
             <button class="btn zoom" data-act="zoom-out" data-help="Make pieces smaller so you can see more at once. Keyboard: −" title="Zoom out (−)">&minus;</button>
             <span class="zoom-readout" data-help="Current zoom, and how big one piece is on screen. It turns amber when pieces get too small to see comfortably." title="Zoom, and how big a piece is on screen">100%</span>
             <button class="btn zoom" data-act="zoom-in" data-help="Make pieces bigger. The number to the left shows how big a piece is on screen. Keyboard: +" title="Zoom in (+)">+</button>
@@ -584,7 +613,7 @@ export class App {
             <canvas class="ref-img"></canvas>
           </aside>
         </main>
-        <button class="chrome-tab" data-act="full-board" hidden aria-label="Show the toolbar" title="Show the toolbar (F)">▾</button>
+        <button class="chrome-tab" data-act="full-board" hidden aria-label="Show the toolbar" title="Show the toolbar (F)"><span aria-hidden="true">▾</span> Toolbar</button>
         <footer class="foot"><span class="stats"></span></footer>
         <div class="tip" hidden></div>
         <div class="settings" hidden>
@@ -791,13 +820,53 @@ export class App {
     }
     this.els.pieces.value = '100';
 
+    /**
+     * The restore tab answers to a touch *starting* on it, not to a completed click.
+     *
+     * It is shaped like a pull-down handle and sits where a pull-down handle sits, so the
+     * first thing a person does is pull it down. A press that moves beyond the browser's
+     * slop never produces a click event, so the tab did nothing at all — reported from a
+     * Samsung tablet as "I can't drag down the top arrow", with force-quitting the app as
+     * the only way back. Acting on `pointerdown` makes the gesture people actually perform
+     * work; the click handler below still covers mouse and keyboard.
+     */
+    this.els.chromeTab.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.playtest.add('press', 'full-board');
+      this.setChrome('shown');
+    });
+
+    /**
+     * The device's own Back button is the second way out, and the one nobody has to find.
+     *
+     * Hiding the toolbar pushes a history entry, so Back undoes it instead of leaving the
+     * app. Somebody who cannot see the tab, or cannot work out that it is a button, still
+     * presses Back — and on a tablet that is the reflex when a screen will not give
+     * anything up.
+     */
+    window.addEventListener('popstate', () => {
+      if (!this.els.bar.hidden) return;
+      this.chromeHistoryEntry = false;
+      this.setChrome('shown');
+    });
+
     this.root.addEventListener('click', (e) => {
       const sample = (e.target as HTMLElement).closest<HTMLElement>('[data-sample]');
       if (sample) {
         void this.openSample(sample.dataset['sample']!);
         return;
       }
-      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset['act'];
+      const chip = (e.target as HTMLElement).closest<HTMLElement>('[data-act="sample-group"]');
+      if (chip) {
+        this.sampleGroup = chip.dataset['group'] ?? '';
+        void this.refreshSamples();
+        return;
+      }
+      const hit = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
+      // The restore tab has already acted, on pointerdown. If the browser sends a click as
+      // well, obeying it here would toggle the toolbar straight back off again.
+      if (hit?.classList.contains('chrome-tab')) return;
+      const act = hit?.dataset['act'];
       if (act) this.playtest.add('press', act);
       if (act === 'new') void this.newPuzzle();
       else if (act === 'hints') this.toggleHints();
@@ -1724,7 +1793,7 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
    * when your hand passes the top of the screen, which is worse than one you asked to
    * hide. This only moves when somebody presses something.
    *
-   * **The way back is a small tab, not a floating button.** Anything persistent sits on
+   * **The way back is a labelled tab, not a floating button.** Anything persistent sits on
    * top of the board, and on a tablet the board *is* the screen, so it will eventually be
    * where a piece is. It is kept to a thumb-sized target at the top centre — directly
    * under where the toolbar was, so "it pulls back down from here" is spatially true, and
@@ -1735,12 +1804,34 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
    * readout and every warning the app gives. It is moved into the footer, which is thirty
    * pixels and always there. Losing feedback to gain space would be a bad trade made
    * invisibly, which is this project's most repeated mistake.
+   *
+   * ---
+   *
+   * **M21: this shipped as a trap, and the reasoning that built it was wrong.**
+   *
+   * M18 also called `requestFullscreen()` here whenever the pointer was coarse, on the
+   * argument that "the browser's own address bar costs more height than this toolbar, so
+   * asking for the screen is the same intent as hiding the toolbar". A Samsung Galaxy Tab
+   * S6 falsified it. The two are not the same intent, because fullscreen on Android does
+   * not only take the address bar — it takes the system navigation bar, which is the
+   * user's way out of *anything*. Hiding the toolbar is reversible inside the app;
+   * fullscreen removes the reversal that lives outside it. Coupling one to the other means
+   * that if the in-app control fails for any reason, there is no second route, and there
+   * were three reasons it could fail at once: the tab acted on `click` while the gesture
+   * it invites is a drag; it sat at `top: 0`, where Android immersive mode swallows the
+   * first touch to reveal the status bar; and at 26px and 0.55 opacity it did not read as
+   * a control. The report was "I have to close the app using one of the tab's side button".
+   *
+   * Every one of those is now fixed, but the lesson is the coupling rather than the three
+   * bugs: **a mode must not remove the escape hatch for the mode.** In an installed PWA
+   * fullscreen buys nothing anyway — there is no address bar to hide — so it is gone,
+   * rather than made conditional. If it ever comes back it belongs on a button of its own,
+   * where a person chooses it knowingly.
    */
   private setChrome(state: 'hidden' | 'shown'): void {
     const hide = state === 'hidden';
     this.els.bar.hidden = hide;
     this.els.chromeTab.hidden = !hide;
-    this.els.chromeTab.textContent = hide ? '▾' : '▴';
     this.root.querySelector('.ojs')?.setAttribute('data-chrome', state);
 
     // The status element itself is moved, not copied: two of them would drift apart the
@@ -1752,22 +1843,23 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     }
 
     /**
-     * Fullscreen, but only where the screen is the scarce thing.
+     * A history entry, so the device's Back button undoes this.
      *
-     * On a tablet the browser's own address bar costs more height than this toolbar, so
-     * asking for the screen is the same intent as hiding the toolbar and should not be a
-     * second control to find. On a desktop, fullscreen is an intrusive mode change nobody
-     * asked for, so it is left alone. Coarse pointer is the honest test for "this is a
-     * touchscreen"; a refusal is ignored, because the toolbar has already gone and the
-     * feature works without it.
+     * Pushed on the way in and popped on the way out, which means the toolbar has a way
+     * back that does not depend on anybody finding a 26-pixel tab. `popstate` above does
+     * the restoring; the flag stops `history.back()` from being answered by a `popstate`
+     * that then tries to restore a toolbar which is already back.
      */
-    if (window.matchMedia('(pointer: coarse)').matches) {
-      const doc = document as Document & { webkitFullscreenElement?: Element };
-      if (hide && !document.fullscreenElement && !doc.webkitFullscreenElement) {
-        void document.documentElement.requestFullscreen?.().catch(() => undefined);
-      } else if (!hide && document.fullscreenElement) {
-        void document.exitFullscreen?.().catch(() => undefined);
+    if (hide && !this.chromeHistoryEntry) {
+      this.chromeHistoryEntry = true;
+      try {
+        history.pushState({ ojsChrome: 'hidden' }, '');
+      } catch {
+        this.chromeHistoryEntry = false;
       }
+    } else if (!hide && this.chromeHistoryEntry) {
+      this.chromeHistoryEntry = false;
+      history.back();
     }
 
     // The canvas has changed size, so the board has to be re-measured and redrawn --
@@ -1778,7 +1870,7 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     });
     this.setStatus(
       hide
-        ? 'Toolbar hidden — press F to bring it back.'
+        ? 'Toolbar hidden — tap the Toolbar tab at the top, press Back, or press F to bring it back.'
         : 'Toolbar back.',
     );
   }
@@ -3357,14 +3449,58 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
       return;
     }
 
-    for (const sample of this.samples) {
+    /**
+     * Collections, as a row of filters above the pictures.
+     *
+     * Filters rather than headings down one long list. On a tablet the gallery is already
+     * two or three cards wide, so headings would mean scrolling past collections to reach
+     * the one you want — and "show me the beach ones" is the actual request. The row only
+     * appears when something is actually in a collection, so a build with none looks
+     * exactly as it did before.
+     */
+    const groups: string[] = [];
+    let loose = false;
+    for (const s of this.samples) {
+      if (s.group === undefined) loose = true;
+      else if (!groups.includes(s.group)) groups.push(s.group);
+    }
+    // A collection the gallery is filtered to may have been removed from the build since.
+    if (this.sampleGroup !== '' && this.sampleGroup !== OTHER_SAMPLES && !groups.includes(this.sampleGroup)) {
+      this.sampleGroup = '';
+    }
+    if (groups.length > 0) {
+      const row = document.createElement('div');
+      row.className = 'sample-groups';
+      // "Everything else" only where there is something else — with every picture in a
+      // collection it would be a filter that always shows nothing.
+      const choices = ['', ...groups, ...(loose ? [OTHER_SAMPLES] : [])];
+      for (const name of choices) {
+        const chip = document.createElement('button');
+        chip.className = 'sample-chip';
+        chip.type = 'button';
+        chip.dataset['act'] = 'sample-group';
+        chip.dataset['group'] = name;
+        chip.textContent = name === '' ? 'All' : name;
+        chip.setAttribute('aria-pressed', String(this.sampleGroup === name));
+        row.append(chip);
+      }
+      list.append(row);
+    }
+
+    const shown = this.samples.filter((s) => {
+      if (this.sampleGroup === '') return true;
+      if (this.sampleGroup === OTHER_SAMPLES) return s.group === undefined;
+      return s.group === this.sampleGroup;
+    });
+
+    for (const sample of shown) {
       const card = document.createElement('button');
       card.className = 'sample-card';
       card.type = 'button';
       card.dataset['sample'] = sample.file;
 
       const img = document.createElement('img');
-      img.src = `${import.meta.env.BASE_URL}samples/${sample.file}`;
+      img.src = sampleUrl(sample.file);
       // Lazy, because the whole point of not precaching these is that a visitor who
       // never opens the panel never pays for them.
       img.loading = 'lazy';
@@ -3386,11 +3522,13 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     const sample = this.samples?.find((s) => s.file === file);
     this.setStatus(`Opening ${sample?.title ?? 'sample'}…`);
     try {
-      const response = await fetch(`${import.meta.env.BASE_URL}samples/${file}`);
+      const response = await fetch(sampleUrl(file));
       if (!response.ok) throw new Error(`the picture could not be fetched (${response.status})`);
       const blob = await response.blob();
       this.closeLibrary();
-      await this.adoptImage(blob, sample?.title ?? file.replace(/\.[^.]+$/, ''));
+      // Basename, not the path: a picture in a collection is "Rockpool", not
+      // "beach/rockpool".
+      await this.adoptImage(blob, sample?.title ?? file.split('/').pop()!.replace(/\.[^.]+$/, ''));
     } catch (err) {
       this.setStatus(
         `Could not open that picture: ${(err as Error).message}. ` +
