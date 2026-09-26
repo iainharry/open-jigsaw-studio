@@ -1375,7 +1375,97 @@ and "show me the beach ones" is the actual request. Sample URLs are now encoded 
 segment — several of the bundled filenames have spaces in them, and an unencoded space is
 the difference between a gallery and thirteen broken images.
 
-## 35. Known limitations after M2
+## 35. Undo, at last (M22)
+
+Listed as a known limitation at the end of M21 and closed here. Nothing in this app could
+be taken back — not a stray drag, not a shuffle, not a tray tipped out. M21's drag
+resistance made the most expensive accident harder to have, which is a mitigation, not a
+fix.
+
+**Snapshots, not a command log.** A command log is smaller and is what a drawing program
+would use. It is the wrong shape here because **a merge is not invertible from the command
+alone**: dropping a piece next to its neighbour destroys two clusters, creates a third,
+redistributes a z-order, may pull both out of a tray and may carry a name across.
+Inverting that needs the state from before it anyway — and every feature added later would
+be a new inverse to write and to get wrong.
+
+The usual objection to snapshots is size, and it does not apply for the same reason save
+files are a few kilobytes: **geometry is regenerated from the seed and never stored**. A
+2,000-piece snapshot is about 70KB in typed arrays, so a 30-deep stack costs a couple of
+megabytes — less than one bundled picture.
+
+**Pivots are recomputed, not stored.** A pivot is a pure function of the piece list.
+Storing it would allow a restore that is internally inconsistent — a cluster drawing in
+the wrong place while every number in it looks plausible. This is the same reasoning as
+`deserialize()` and the same reasoning as geometry itself.
+
+**The selection is cleared after every step.** It holds cluster ids, and undoing a merge
+destroys the id the merge created; a kept selection would be a set of ids that partly no
+longer exist, and the next drag would move some of what was selected.
+
+### The watchdog, which is the part worth keeping
+
+The way an undo feature rots is not by being wrong the day it ships. It is that somebody
+adds a feature in M30 and does not wrap it, and undo quietly skips that one action.
+
+So the app keeps a cheap `fingerprint()` of the puzzle and compares it, on any frame that
+redrew, against the fingerprint as of the last recorded step. A mismatch with no gesture in
+flight means something changed the state without recording a way back, and it increments
+`unguardedChanges`. The smoke test then **presses every control in the toolbar and requires
+that counter not to move** — 23 controls, 0 unguarded changes. That assertion is what keeps
+undo correct as the app grows. A list of call sites I remembered to wrap is not a test.
+
+Two details the fingerprint needed. Positions are rounded to a tenth of a pixel, because
+floating-point drift of 1e-12 on a drag that ended where it began is not a change a person
+made and would otherwise fill the stack with steps that appear to do nothing. And the
+cluster ids are sorted before mixing, because a merge reorders the `Map` without the
+puzzle looking any different.
+
+**Scope, stated rather than discovered.** In: moves, rotations, merges, shuffles, tray
+creation, deletion, collapse, membership, names. Out: zoom and pan (undo would then mean
+two things), settings (an undo that silently turned rotation back on is a bug report), and
+cutting a new puzzle (the stack is cleared — the old steps describe pieces that no longer
+exist).
+
+One implementation trap: `shuffle()` replaces `session.state` with a fresh object.
+Restoring works anyway because `restoreSnapshot()` mutates whatever state it is handed and
+the regenerated geometry is identical — but only because geometry comes from the seed. It
+is worth knowing that is *why* it works.
+
+## 36. Printing a picture on its own (M22)
+
+Asked for because most of the bundled pictures are teaching posters, and a poster that
+only exists inside a jigsaw never goes on a wall. `printChallengeSheet()` already existed
+and prints a puzzle to cut out; this prints the picture, which is a different thing.
+
+**The page turns to match the picture.** Every bundled poster is landscape, and a landscape
+picture on a portrait page prints at about 60% of the size it could.
+
+**The resolution is reported and not flattered.** A 1536×1024 poster across A4 is ~137dpi:
+right for a wall, soft for fine print at a desk, and half that again on A3. A print button
+that silently produced a blurry sheet would be worse than none, so the status line says
+what is about to come out before it does. The smoke test asserts the figure is between 100
+and 200 — if it ever silently became a claim of 300dpi the feature would be lying to a
+teacher.
+
+**Nothing is added to the sheet**: no caption, no border, no app name. The sheet is
+asserted to hold exactly one element and no text at all. These posters carry their own
+titles, and a caption in the app's typeface under a classroom poster is what stops it
+being usable in a classroom.
+
+**The original bytes where they can be trusted, a canvas re-encode where they cannot.** A
+`Blob` does not always know what it is: one fetched from a server that sends no content
+type arrives with `type === ''`, and `readAsDataURL` then produces `data:;base64,…`, which
+some browsers sniff and render and others print blank. That is a real failure the smoke
+test caught only because the test server was itself serving `application/octet-stream` for
+`.webp` — fixed in both places, and the fallback is a fallback rather than the rule so a
+24-megapixel photograph does not become a hundred-megabyte data URL.
+
+The sheet is built by a function separate from printing, for the reason recorded at
+`challengeSheetHtml()`: a print dialog cannot be inspected, so a test of "it printed"
+could only assert that a function was called.
+
+## 37. Known limitations after M2
 
 - Preparation always recuts, so a crop cannot be changed on a part-finished puzzle. There
   is no way around this: the pieces were cut from the old picture.
@@ -1385,11 +1475,13 @@ the difference between a gallery and thirteen broken images.
   through save files; nothing calls it yet. Trays (section 13) cover the unconnected case.
 - Trays do not scroll. A tray with two hundred pieces grows tall rather than paging, so a
   very large tray is unwieldy.
-- **No undo.** Nothing in the app can be taken back: an accidental drag, a shuffle, a tray
-  emptied. M21 added resistance to the most expensive accident rather than a way to undo
-  it, which is a mitigation and not a fix. A snapshot ring of serialised cluster and tray
-  positions would do it — geometry is regenerated from the seed, so a snapshot is small —
-  and a partial undo that silently covered moves but not joins would be worse than none.
+- Undo does not reach past cutting a new puzzle, and does not cover the picture itself —
+  a crop applied in **Prepare…** recuts, so it clears the stack. This is deliberate
+  (section 35) but it is still a thing a person can lose work to: preparing an image is
+  the one destructive action with no way back.
+- Printing is A4 only, and fits rather than tiles. A poster cannot be spread over four
+  sheets to make a wall-sized one, which is the obvious next request given the resolution
+  ceiling.
 - Sorting is by colour and by edge only. Sorting by image *region* (sky, foreground,
   subject) would need segmentation and is not obviously better than colour for the job.
 - Colour groups are computed from a mean per piece, so a piece split evenly between two

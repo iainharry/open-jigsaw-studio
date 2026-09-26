@@ -21,6 +21,10 @@ import {
   findBoardSnap,
   isBoardFull,
   releaseClusters,
+  History,
+  snapshot,
+  restoreSnapshot,
+  fingerprint,
   DEFAULT_EDIT,
   isUneditedImage,
   type ImageEdit,
@@ -103,6 +107,15 @@ interface SampleEntry {
  * It is a display name too, so it reads correctly on the chip without a second lookup.
  */
 const OTHER_SAMPLES = 'Everything else';
+
+/** Titles come from filenames and from what the player typed, so neither is trusted. */
+function escapeHtml(text: string): string {
+  return text.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
+  );
+}
 
 function sampleUrl(file: string): string {
   return `${import.meta.env.BASE_URL}samples/${file.split('/').map(encodeURIComponent).join('/')}`;
@@ -317,6 +330,26 @@ export class App {
   /** True while a history entry is standing in for "the toolbar is hidden". See setChrome. */
   private chromeHistoryEntry = false;
 
+  /** Undo and redo. See `engine/history.ts` for what is and is not in it. */
+  private readonly history = new History();
+  /** Fingerprint of the puzzle as of the last recorded undo step. */
+  private mark = 0;
+  /** Nesting depth of `beginChange`, so a gesture inside a gesture records one step. */
+  private changeDepth = 0;
+  /**
+   * How many times the puzzle changed without anybody recording an undo step.
+   *
+   * Zero in a correct build. It is a counter rather than an exception because a missed
+   * undo step is a degraded feature, not a reason to stop the app mid-puzzle — but it is
+   * read by the smoke test, which presses every control in the toolbar and fails if any
+   * of them moves a piece without leaving a way back. That assertion is the only thing
+   * that keeps undo correct as features are added; a list of call sites I remembered to
+   * wrap is not.
+   */
+  unguardedChanges = 0;
+  /** When the watchdog last looked, so it does not look on every frame. */
+  private lastGuardCheck = 0;
+
   /** Folder that receives a .jigsaw copy on every save, if one has been chosen. */
   private backupHandle: Awaited<ReturnType<typeof getStoredFolder>> = null;
 
@@ -384,6 +417,8 @@ export class App {
       },
       // Free-form solving replaces the merge rule with a snap-to-board rule.
       releaseRule: (ids) => this.releaseFreeform(ids),
+      onBeforeChange: (label) => this.beginChange(label),
+      onGestureEnd: () => this.endChange(),
       onGrab: (pieceId) => {
         this.playtest.sawActivity();
         this.hintPieceId = pieceId;
@@ -480,6 +515,8 @@ export class App {
           <button class="btn" data-act="prepare" data-help="Crop, straighten and adjust the picture, then cut it into a new puzzle. Your original photo is never changed.">Prepare…</button>
           <button class="btn" data-act="new" data-help="Cut the same picture again into the number of pieces chosen above. Your current progress on it is replaced.">New puzzle</button>
           <button class="btn" data-act="shuffle" data-help="Break everything apart and scatter it again. The picture and piece count stay the same.">Shuffle</button>
+          <button class="btn" data-act="undo" data-help="Take back the last thing you did to the pieces — a move, a join, a tray, a shuffle. It goes back up to thirty steps. It does not change the zoom or your settings, and it cannot reach past cutting a new puzzle. Keyboard: Ctrl+Z" disabled>Undo</button>
+          <button class="btn" data-act="redo" data-help="Put back something you have just undone. Doing anything new clears it. Keyboard: Ctrl+Y" disabled>Redo</button>
           </span>
           <span class="group" data-zone="View">
             <button class="btn" data-act="full-board" data-help="Fold the whole toolbar away so the board has the screen. On a tablet the toolbar is more than a quarter of the height. A labelled tab stays at the top of the board to bring it back; your device's Back button and the F key also bring it back.">Hide toolbar</button>
@@ -873,7 +910,9 @@ export class App {
       else if (act === 'hint-find') this.findHints();
       else if (act === 'edges-only') this.toggleEdgesOnly();
       else if (act === 'prepare') void this.prepareImage();
-      else if (act === 'shuffle') this.shuffle();
+      else if (act === 'shuffle') this.mutate('shuffle', () => this.shuffle());
+      else if (act === 'undo') this.undo();
+      else if (act === 'redo') this.redoStep();
       else if (act === 'fit-board') this.fitBoard();
       else if (act === 'fit-all') this.fitAll();
       else if (act === 'zoom-in') this.zoomBy(1.25);
@@ -881,7 +920,7 @@ export class App {
       else if (act === 'tool') this.toggleTool();
       else if (act === 'library') void this.openLibrary();
       else if (act === 'close-library') this.closeLibrary();
-      else if (act === 'name-group') this.nameSelectedGroup();
+      else if (act === 'name-group') this.mutate('name a group', () => this.nameSelectedGroup());
       else if (act === 'settings') {
         this.updatePlaytestUi();
         this.els.settings.hidden = false;
@@ -908,11 +947,11 @@ export class App {
       else if (act === 'colour-prev') this.stepColourGroup(-1);
       else if (act === 'colour-next') this.stepColourGroup(1);
       else if (act === 'colour-done') this.endColourSort();
-      else if (act === 'new-tray') this.newTray();
-      else if (act === 'collapse-tray') this.toggleActiveTray();
-      else if (act === 'empty-tray') this.emptyActiveTray();
-      else if (act === 'rotl') this.input.rotateSelection(-Math.PI / 2);
-      else if (act === 'rotr') this.input.rotateSelection(Math.PI / 2);
+      else if (act === 'new-tray') this.mutate('new tray', () => this.newTray());
+      else if (act === 'collapse-tray') this.mutate('collapse a tray', () => this.toggleActiveTray());
+      else if (act === 'empty-tray') this.mutate('empty a tray', () => this.emptyActiveTray());
+      else if (act === 'rotl') this.mutate('turn pieces', () => this.input.rotateSelection(-Math.PI / 2));
+      else if (act === 'rotr') this.mutate('turn pieces', () => this.input.rotateSelection(Math.PI / 2));
     });
 
     this.els.ghost.addEventListener('input', () => {
@@ -1002,16 +1041,27 @@ export class App {
     window.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
+      // Undo is the one shortcut that has to survive the modifier guard below, because
+      // the modifier is the shortcut. Ctrl+Shift+Z as well as Ctrl+Y: one is what
+      // Windows expects and the other is what everything else does.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (key === 'z' && !e.shiftKey) this.undo();
+        else if (key === 'y' || (key === 'z' && e.shiftKey)) this.redoStep();
+        else return;
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === '+' || e.key === '=') this.zoomBy(1.25);
       else if (e.key === '-' || e.key === '_') this.zoomBy(1 / 1.25);
       else if (e.key === '0') this.fitBoard();
       else if (e.key === '9') this.fitAll();
-      else if (e.key === 't' || e.key === 'T') this.newTray();
+      else if (e.key === 't' || e.key === 'T') this.mutate('new tray', () => this.newTray());
       else if (e.key === 'f' || e.key === 'F') this.setChrome(this.els.bar.hidden ? 'shown' : 'hidden');
       else if (e.key === 'Tab') this.cycleSelection(e.shiftKey ? -1 : 1);
-      else if (e.key.startsWith('Arrow')) this.nudgeSelection(e.key, e.shiftKey);
-      else if (e.key === 'Enter' || e.key === ' ') this.placeSelection();
+      else if (e.key.startsWith('Arrow')) this.mutate('nudge pieces', () => this.nudgeSelection(e.key, e.shiftKey));
+      else if (e.key === 'Enter' || e.key === ' ') this.mutate('place a piece', () => this.placeSelection());
       else return;
       e.preventDefault();
     });
@@ -1283,6 +1333,8 @@ export class App {
     // Colours are per piece, so a different cut or a different picture invalidates them.
     this.pieceColours = null;
     this.endColourSort();
+    // A new set of pieces: every step behind us describes pieces that no longer exist.
+    this.resetHistory();
     this.renderer.invalidateGeometry();
     this.renderer.setImage(shown, cutW, cutH);
     this.els.title.value = title;
@@ -1582,6 +1634,8 @@ export class App {
     this.session = { record, state, image: bitmap, original: bitmap, imageMeta: meta, edit: DEFAULT_EDIT };
     this.pieceColours = null;
     this.endColourSort();
+    // A new set of pieces: every step behind us describes pieces that no longer exist.
+    this.resetHistory();
     this.renderer.invalidateGeometry();
     this.renderer.setImage(bitmap, width, height);
     this.els.title.value = name;
@@ -1649,6 +1703,156 @@ export class App {
     win.print();
     setTimeout(() => frame.remove(), 60_000);
     this.els.chNote.textContent = 'Sheet sent to your printer dialog.';
+  }
+
+  /**
+   * Print a picture on its own, at the size the paper allows.
+   *
+   * Not the puzzle: the picture. Asked for because most of the bundled pictures are
+   * teaching posters, and a poster that only exists inside a jigsaw is a poster that
+   * never goes on a wall. The same button works on an imported photograph, which is the
+   * case that makes it worth building rather than special-casing the samples.
+   *
+   * Three decisions.
+   *
+   * **The page is turned to match the picture.** Every one of the bundled posters is
+   * landscape, and a landscape picture on a portrait page prints at 60% of the size it
+   * could. `@page { size: A4 landscape }` is honoured by every current browser and
+   * ignored harmlessly by the ones that are not, which is the right failure.
+   *
+   * **The print resolution is reported, and it is not flattered.** A 1536×1024 poster
+   * across an A4 sheet is about 140dpi: right for a wall, soft for reading fine print at
+   * a desk, and plainly wrong for A3. A print button that silently produced a blurry
+   * sheet would be a worse feature than no print button, so the status line says what is
+   * about to come out of the printer before it does.
+   *
+   * **Nothing is added to the sheet.** No title, no border, no app name. These pictures
+   * carry their own titles, and a caption in the app's typeface underneath a classroom
+   * poster is the kind of thing that stops it being usable in a classroom.
+   *
+   * Printed from an iframe for the reason `printChallengeSheet()` gives: a popup window
+   * is blocked often enough to be unreliable, and when it is blocked it fails silently.
+   */
+  private async printPicture(blob: Blob, label: string): Promise<void> {
+    this.setStatus(`Preparing ${label} to print…`);
+    let sheet: { html: string; dpi: number; landscape: boolean };
+    try {
+      sheet = await this.pictureSheet(blob, label);
+    } catch (err) {
+      this.setStatus(`Could not prepare that picture to print: ${(err as Error).message}.`);
+      return;
+    }
+    const { html, dpi, landscape } = sheet;
+
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    if (!doc || !frame.contentWindow) {
+      frame.remove();
+      this.setStatus('This browser would not open a print view.');
+      return;
+    }
+    doc.open();
+    doc.write(html);
+    doc.close();
+    const win = frame.contentWindow;
+
+    // The image is a data URL, so it is not fetched — but it is still decoded, and
+    // printing before the decode finishes prints a blank sheet.
+    const image = doc.querySelector('img');
+    if (image && !image.complete) {
+      await new Promise<void>((resolve) => {
+        image.addEventListener('load', () => resolve(), { once: true });
+        image.addEventListener('error', () => resolve(), { once: true });
+        setTimeout(resolve, 5000);
+      });
+    }
+
+    win.focus();
+    win.print();
+    setTimeout(() => frame.remove(), 60_000);
+    this.setStatus(
+      `${label} sent to your printer — ${landscape ? 'landscape' : 'portrait'} A4, about ${dpi}dpi. ` +
+        (dpi < 150
+          ? 'That is fine on a wall; small print on it will be soft close up, and softer again on A3.'
+          : 'Sharp at arm’s length and at a desk.'),
+    );
+  }
+
+  /**
+   * The sheet itself, and what it will look like coming out.
+   *
+   * Separate from printing for the same reason `challengeSheetHtml()` is: a print dialog
+   * cannot be inspected, so a test of "it printed" can only ever assert that a function
+   * was called. This can be produced and read.
+   */
+  private async pictureSheet(
+    blob: Blob,
+    label: string,
+  ): Promise<{ html: string; dpi: number; landscape: boolean }> {
+    const bitmap = await createImageBitmap(blob);
+    const width = bitmap.width;
+    const height = bitmap.height;
+
+    /**
+     * The original bytes where they can be trusted, a re-encode where they cannot.
+     *
+     * A `Blob` does not always know what it is. One fetched from a server that sends no
+     * content type, or restored from a `.jigsaw` file written by an older build, arrives
+     * with `type === ''` — and `readAsDataURL` then produces `data:;base64,…`, which some
+     * browsers sniff and render and others print as a blank sheet. Re-encoding through a
+     * canvas always yields a valid PNG.
+     *
+     * It is a fallback rather than the rule because the original is smaller, lossless in
+     * its own format, and avoids turning a 24-megapixel photograph into a hundred-megabyte
+     * data URL that the print view will not survive.
+     */
+    let dataUrl: string;
+    if (/^image\/(png|jpeg|webp|avif|gif)$/.test(blob.type)) {
+      bitmap.close?.();
+      dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('the picture could not be read'));
+        reader.readAsDataURL(blob);
+      });
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('this browser would not draw the picture');
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+      dataUrl = canvas.toDataURL('image/png');
+    }
+
+    const landscape = width >= height;
+    // A4 less a 6mm margin, in inches, so the dpi figure below is the real one rather
+    // than one computed against paper the printer cannot reach.
+    const paperLongMm = 297 - 12;
+    const paperShortMm = 210 - 12;
+    const acrossMm = landscape ? paperLongMm : paperShortMm;
+    const downMm = landscape ? paperShortMm : paperLongMm;
+    // The picture is fitted, so whichever dimension runs out first sets the scale.
+    const scale = Math.min(acrossMm / width, downMm / height);
+    const dpi = Math.round(25.4 / scale);
+
+    const html = `<!doctype html><html><head><meta charset="utf-8" />
+<title>${escapeHtml(label)}</title>
+<style>
+  @page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 6mm; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  /* Fitted rather than stretched: a poster with its proportions altered is a poster with
+     a circle that is no longer a circle, on a sheet about shapes. */
+  img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  @media print { html, body { width: 100%; height: 100%; } }
+</style></head>
+<body><img src="${dataUrl}" alt="${escapeHtml(label)}" /></body></html>`;
+
+    return { html, dpi, landscape };
   }
 
   /** The sheet itself. Kept separate so it can be produced and inspected without printing. */
@@ -1972,6 +2176,8 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     this.session = { record, state, image, original: bitmap, imageMeta: meta, edit };
     this.pieceColours = null;
     this.endColourSort();
+    // A new set of pieces: every step behind us describes pieces that no longer exist.
+    this.resetHistory();
     this.renderer.invalidateGeometry();
     // Colour boards are derived from geometry, not stored, exactly as the prepared image
     // is derived from the original. Regenerating both on open is what keeps a record to
@@ -2066,6 +2272,155 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     if (stale && stale !== original) stale.close();
     this.session = null;
     await this.startPuzzle(imageMeta, original, title, next);
+  }
+
+  /**
+   * Record where the puzzle is, before something changes it.
+   *
+   * Paired with `endChange()`, which throws the record away if nothing actually changed.
+   * Nested calls collapse into one step: a gesture that internally does two things is one
+   * thing to the person who made it.
+   */
+  private beginChange(label: string): void {
+    const state = this.session?.state;
+    if (!state) return;
+    if (this.changeDepth++ > 0) return;
+    this.history.push(snapshot(state, label));
+  }
+
+  private endChange(): void {
+    const state = this.session?.state;
+    if (!state) return;
+    if (--this.changeDepth > 0) return;
+    this.changeDepth = 0;
+    const now = fingerprint(state);
+    if (now === this.mark) {
+      // A press that moved nothing, a drag that ended where it began, a rename cancelled.
+      // Keeping these would fill the stack with steps that appear to do nothing.
+      this.history.discard();
+    } else {
+      this.mark = now;
+    }
+    this.updateHistoryUi();
+  }
+
+  /** Wrap something that changes the puzzle so it can be taken back. */
+  private mutate<T>(label: string, fn: () => T): T {
+    this.beginChange(label);
+    try {
+      return fn();
+    } finally {
+      this.endChange();
+    }
+  }
+
+  /**
+   * The watchdog.
+   *
+   * Called from the frame loop. If the puzzle no longer matches the last recorded step and
+   * nothing is mid-gesture, then something changed the state without recording a way back
+   * — which is how an undo feature rots: not by being wrong on the day it ships, but by a
+   * feature added later that nobody wrapped. Counting it makes that mechanically
+   * detectable instead of a matter of my memory, and the smoke test reads the counter
+   * after pressing every control in the toolbar.
+   *
+   * The mark is resynced afterwards, so one unwrapped action is reported once rather than
+   * on every frame for the rest of the session.
+   */
+  private checkHistoryGuard(): void {
+    const state = this.session?.state;
+    if (!state || this.changeDepth > 0) return;
+    // Four times a second, not sixty. Fingerprinting is a pass over every cluster, and
+    // panning a 2,000-piece board redraws every frame without ever changing the puzzle —
+    // so the frame rate is exactly where this must not cost anything. A mutation nobody
+    // wrapped is still caught within 250ms, which is soon enough for a counter that only
+    // a test reads.
+    const now2 = performance.now();
+    if (now2 - this.lastGuardCheck < 250) return;
+    this.lastGuardCheck = now2;
+    const now = fingerprint(state);
+    if (now === this.mark) return;
+    this.unguardedChanges++;
+    this.mark = now;
+    if (import.meta.env.DEV) {
+      console.warn('open-jigsaw-studio: the puzzle changed with no undo step recorded');
+    }
+  }
+
+  private undo(): void {
+    const state = this.session?.state;
+    if (!state) return;
+    const snap = this.history.undo(snapshot(state, ''));
+    if (!snap) {
+      this.setStatus('There is nothing to undo.');
+      return;
+    }
+    restoreSnapshot(state, snap);
+    this.afterHistoryStep(`Undid: ${snap.label}.`);
+  }
+
+  private redoStep(): void {
+    const state = this.session?.state;
+    if (!state) return;
+    const snap = this.history.redo(snapshot(state, ''));
+    if (!snap) {
+      this.setStatus('There is nothing to redo.');
+      return;
+    }
+    restoreSnapshot(state, snap);
+    this.afterHistoryStep(`Redid: ${snap.label}.`);
+  }
+
+  /**
+   * Everything that has to catch up after stepping through history.
+   *
+   * **The selection is cleared rather than kept.** It holds cluster ids, and undoing a
+   * merge destroys the id that the merge created — so a kept selection would be a set of
+   * ids that partly no longer exist, and the next drag would move some of what was
+   * selected. Clearing is the only answer that is right in every case.
+   */
+  private afterHistoryStep(message: string): void {
+    this.clearSelection();
+    this.renderer.highlightClusters = null;
+    this.hintPieceId = null;
+    this.activeTray = null;
+    this.mark = fingerprint(this.session!.state);
+    this.refreshTrayUi();
+    this.refreshGroupList();
+    this.refreshHints();
+    this.updateHistoryUi();
+    this.updateStatus();
+    this.setStatus(message);
+    this.dirty = true;
+    void this.save();
+  }
+
+  /** Grey the buttons out when there is nothing behind or ahead. */
+  private updateHistoryUi(): void {
+    const undo = this.root.querySelector<HTMLButtonElement>('[data-act="undo"]');
+    const redo = this.root.querySelector<HTMLButtonElement>('[data-act="redo"]');
+    if (undo) {
+      undo.disabled = !this.history.canUndo;
+      undo.title = this.history.canUndo ? `Undo ${this.history.undoLabel} (Ctrl+Z)` : 'Nothing to undo';
+    }
+    if (redo) {
+      redo.disabled = !this.history.canRedo;
+      redo.title = this.history.canRedo ? `Redo ${this.history.redoLabel} (Ctrl+Y)` : 'Nothing to redo';
+    }
+  }
+
+  /**
+   * Start the history again from here.
+   *
+   * Called when a new puzzle is cut or a different one opened. The old steps describe
+   * pieces that no longer exist — restoring one would put a 500-piece arrangement onto a
+   * 100-piece board.
+   */
+  private resetHistory(): void {
+    this.history.clear();
+    this.changeDepth = 0;
+    this.mark = this.session ? fingerprint(this.session.state) : 0;
+    this.updateHistoryUi();
   }
 
   private shuffle(): void {
@@ -3368,14 +3723,16 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     if (!save || !this.session) return;
 
     if (clusterId) {
-      this.commitGroupName(Number(clusterId), input.value);
+      this.mutate('rename a group', () => this.commitGroupName(Number(clusterId), input.value));
       return;
     }
     if (!trayId) return;
-    renameTray(this.session.state, Number(trayId), input.value);
-    this.refreshTrayUi();
-    this.dirty = true;
-    void this.save();
+    this.mutate('rename a tray', () => {
+      renameTray(this.session!.state, Number(trayId), input.value);
+      this.refreshTrayUi();
+      this.dirty = true;
+      void this.save();
+    });
   }
 
   // --- Library --------------------------------------------------------------
@@ -3494,10 +3851,16 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
     });
 
     for (const sample of shown) {
-      const card = document.createElement('button');
+      // A div holding two buttons rather than one button: the card has a second action
+      // now, and a button inside a button is invalid and behaves differently in every
+      // browser that tolerates it.
+      const card = document.createElement('div');
       card.className = 'sample-card';
-      card.type = 'button';
-      card.dataset['sample'] = sample.file;
+
+      const open = document.createElement('button');
+      open.className = 'sample-open';
+      open.type = 'button';
+      open.dataset['sample'] = sample.file;
 
       const img = document.createElement('img');
       img.src = sampleUrl(sample.file);
@@ -3507,13 +3870,37 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
       img.alt = '';
       const title = document.createElement('strong');
       title.textContent = sample.title;
-      card.append(img, title);
+      open.append(img, title);
       if (sample.note) {
         const note = document.createElement('span');
         note.textContent = sample.note;
-        card.append(note);
+        open.append(note);
       }
+      card.append(open);
+
+      const print = document.createElement('button');
+      print.className = 'btn sample-print';
+      print.type = 'button';
+      print.textContent = 'Print';
+      print.title = `Print ${sample.title} without cutting it into a puzzle`;
+      print.addEventListener('click', () => void this.printSample(sample));
+      card.append(print);
+
       list.append(card);
+    }
+  }
+
+  /** Print a bundled picture without cutting it up. */
+  private async printSample(sample: SampleEntry): Promise<void> {
+    try {
+      const response = await fetch(sampleUrl(sample.file));
+      if (!response.ok) throw new Error(`the picture could not be fetched (${response.status})`);
+      await this.printPicture(await response.blob(), sample.title);
+    } catch (err) {
+      this.setStatus(
+        `Could not print that picture: ${(err as Error).message}. ` +
+          `Pictures that come with the app are downloaded the first time you use them, so this needs a connection once.`,
+      );
     }
   }
 
@@ -3610,6 +3997,11 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
               ? '<button class="btn on lib-relink" title="Choose the original picture file again. It must be the same file the puzzle was made from.">Relink picture…</button>'
               : '<button class="btn lib-open">Open</button>'
           }
+          ${
+            orphaned
+              ? ''
+              : '<button class="btn lib-print" title="Print the picture this puzzle was made from, on its own">Print picture</button>'
+          }
           <button class="btn lib-export" title="Save as a .jigsaw file">Export</button>
           ${canShare ? '<button class="btn lib-share" title="Send this puzzle to another app">Share</button>' : ''}
           <button class="btn lib-delete" title="Delete this puzzle">Delete</button>
@@ -3622,6 +4014,20 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
       });
       card.querySelector<HTMLButtonElement>('.lib-relink')?.addEventListener('click', () => {
         this.relinkPicture(record);
+      });
+      card.querySelector<HTMLButtonElement>('.lib-print')?.addEventListener('click', () => {
+        void (async () => {
+          // The *original* picture, not the prepared one. A crop made to suit a puzzle is
+          // not what somebody printing a poster wants, and the original is the file they
+          // recognise. `original` is what `relinkPicture` restores, so this is also the
+          // one guaranteed to be there.
+          const stored = await getImage(record.imageHash).catch(() => undefined);
+          if (!stored) {
+            this.setStatus('That picture is no longer stored — relink it first.');
+            return;
+          }
+          await this.printPicture(stored.blob, record.title);
+        })();
       });
 
       const notes = card.querySelector<HTMLTextAreaElement>('.lib-notes')!;
@@ -4033,6 +4439,10 @@ Play the same puzzle on screen at <code>${code}</code>.</p>
       this.renderer.draw(this.session.state, this.viewport);
       this.dirty = false;
       this.updateStats();
+      // Only on a frame that actually redrew, and only after it: fingerprinting costs a
+      // pass over every cluster, and a puzzle that did not change cannot have changed
+      // without an undo step.
+      this.checkHistoryGuard();
     }
     this.scheduleSave();
     requestAnimationFrame(this.loop);

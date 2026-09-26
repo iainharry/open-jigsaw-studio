@@ -337,6 +337,11 @@ same text as the reference at the end of this guide, and it is always up to date
 There are three ways back, so you cannot get stuck: the <b>▾ Toolbar</b> tab at the top of
 the board, your device's <b>Back</b> button, or <kbd>F</kbd> again. It is a different
 button from <b>Fit board</b> beside it, which changes the zoom rather than the layout.</li>
+<li><b>Undo.</b> <b>Ctrl+Z</b>, or the Undo button in the Puzzle zone, takes back the last
+thing you did to the pieces — a move, a join, a tray, even a shuffle — up to thirty steps.
+<b>Ctrl+Y</b> puts it back. It deliberately does <em>not</em> change the zoom or your
+settings, and it cannot reach back past cutting a new puzzle, because those are different
+pieces.</li>
 <li><b>Joined pieces have weight.</b> A single loose piece follows your finger straight
 away. A group of joined pieces needs a deliberate movement — up to about a centimetre —
 before it starts to follow, and the bigger the group the more it asks for. This is on
@@ -376,6 +381,13 @@ puzzle.</p>
 <p><b>Print sheet…</b> in the same panel produces the outline and the pieces at matching
 scale, to cut out and solve on a table. The code is printed on it, so the same puzzle can
 be picked up on screen later.</p>
+<h3>Printing a picture as a poster</h3>
+<p>In <b>My puzzles</b>, each bundled picture has a <b>Print</b> button and each saved
+puzzle has <b>Print picture</b>. That prints the picture on its own — no pieces, no
+caption, no app name — turning the page to match the picture and fitting it to the sheet.
+The status line tells you the resolution before it goes: the pictures that come with the
+app land around 140dpi on A4, which reads well on a wall and goes soft for small print
+close up. Enlarging one to A3 halves that again.</p>
 <h3>Difficulty</h3>
 <p>For an <i>Any fit</i> puzzle the app works out how hard it is by playing it badly a few
 hundred times and seeing how often that finishes — so the rating describes the puzzle

@@ -22,3 +22,4 @@ export * from './packing.js';
 export * from './challenge.js';
 export * from './glyphs.js';
 export * from './pictureDetail.js';
+export * from './history.js';

@@ -1109,22 +1109,48 @@ body {
   font-weight: 600;
 }
 
+/* The card is a container now, not a button: it holds Open and Print, and a
+   button inside a button is invalid HTML. The frame moved out here; the part
+   you press to open the picture is `.sample-open` inside it. */
 .sample-card {
-  display: grid;
-  gap: 2px;
-  padding: 6px;
-  text-align: left;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--control);
+  overflow: hidden;
+}
+
+.sample-card:hover,
+.sample-card:focus-within {
+  border-color: var(--accent);
+}
+
+.sample-open {
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  flex: 1;
+  text-align: left;
+  border: 0;
+  background: none;
   color: var(--text);
   cursor: pointer;
   font: inherit;
 }
 
-.sample-card:hover,
-.sample-card:focus-visible {
-  border-color: var(--accent);
+/* Quiet, and at the bottom. Printing is the second thing anybody wants from
+   this panel, and a Print button as loud as the picture would say otherwise. */
+.sample-print {
+  margin: 0 6px 6px;
+  min-height: 30px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sample-print:hover,
+.sample-print:focus-visible {
+  color: var(--text);
 }
 
 .sample-card img {

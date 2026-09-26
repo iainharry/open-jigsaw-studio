@@ -16,7 +16,22 @@ import { chromium } from 'playwright';
 
 const DIST = new URL('../dist/', import.meta.url).pathname;
 const BASE = '/open-jigsaw-studio/';
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.map': 'application/json' };
+// The image types matter as much as the code ones: served as octet-stream, a picture
+// still decodes -- browsers sniff -- but its Blob arrives with no type, which is a
+// different thing from what GitHub Pages sends and hid a real bug in printing once.
+const MIME = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.map': 'application/json',
+  '.json': 'application/json',
+  '.webp': 'image/webp',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.avif': 'image/avif',
+  '.svg': 'image/svg+xml',
+};
 
 const { server, port } = await new Promise((resolve) => {
   const s = createServer(async (req, res) => {
@@ -2496,6 +2511,169 @@ if (weight.skipped) {
   check(`and the same wobble does not move ${weight.held} joined pieces`, weight.bigSmall.moved === 0, `moved ${weight.bigSmall.moved.toFixed(1)}`);
   check('but a deliberate drag moves them normally', weight.bigLarge.moved > 0, `moved ${weight.bigLarge.moved.toFixed(1)}`);
 }
+
+// 26. Undo. The claim is "the last thing you did to the pieces can be taken back", so the
+// check is that the board comes back to the arrangement it had -- by fingerprint, not by
+// a button turning grey. Redo is checked the same way, and so is the rule that doing
+// something new throws the redo away.
+const undo = await page.evaluate(async (fireSrc) => {
+  const fireEv = eval(fireSrc);
+  const app = globalThis.__ojs;
+  const canvas = document.querySelector('.board');
+  const state = () => app.session.state;
+  const mark = () => globalThis.__ojsFingerprint(state());
+
+  const rect = canvas.getBoundingClientRect();
+  const worldToScreen = (p) => ({
+    x: (p.x - app.viewport.x) * app.viewport.zoom + rect.width / 2 + rect.left,
+    y: (p.y - app.viewport.y) * app.viewport.zoom + rect.height / 2 + rect.top,
+  });
+  const pieceWorld = (id) => {
+    const c = state().clusters.get(state().clusterOfPiece[id]);
+    const g = state().geometry.pieces[id];
+    return {
+      x: c.x + (g.solved.x - c.pivotX) + g.bounds.w / 2,
+      y: c.y + (g.solved.y - c.pivotY) + g.bounds.h / 2,
+    };
+  };
+  const drag = async (id, dx, dy) => {
+    const c = state().clusters.get(state().clusterOfPiece[id]);
+    const zi = state().zOrder.indexOf(c.id);
+    if (zi >= 0) { state().zOrder.splice(zi, 1); state().zOrder.push(c.id); }
+    const from = worldToScreen(pieceWorld(id));
+    fireEv(canvas, 'pointerdown', from.x, from.y);
+    for (let i = 1; i <= 12; i++) {
+      fireEv(canvas, 'pointermove', from.x + (dx * i) / 12, from.y + (dy * i) / 12);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    fireEv(canvas, 'pointerup', from.x + dx, from.y + dy);
+    await new Promise((r) => setTimeout(r, 200));
+  };
+
+  const start = mark();
+  await drag(0, 140, 90);
+  const moved = mark();
+
+  document.querySelector('[data-act="undo"]').click();
+  await new Promise((r) => setTimeout(r, 200));
+  const afterUndo = mark();
+
+  document.querySelector('[data-act="redo"]').click();
+  await new Promise((r) => setTimeout(r, 200));
+  const afterRedo = mark();
+
+  // Undo again, then do something new: the redo must be gone.
+  document.querySelector('[data-act="undo"]').click();
+  await new Promise((r) => setTimeout(r, 200));
+  const redoOffered = !document.querySelector('[data-act="redo"]').disabled;
+  await drag(1, 60, 40);
+  const redoGone = document.querySelector('[data-act="redo"]').disabled;
+
+  // A shuffle is a big change, and it is the one most worth being able to take back.
+  const beforeShuffle = mark();
+  document.querySelector('[data-act="shuffle"]').click();
+  await new Promise((r) => setTimeout(r, 900));
+  const shuffled = mark();
+  document.querySelector('[data-act="undo"]').click();
+  await new Promise((r) => setTimeout(r, 400));
+  const afterShuffleUndo = mark();
+
+  // A press that moves nothing must not leave a step behind that appears to do nothing.
+  const depthBefore = app.history.depth;
+  await drag(2, 1, 0);
+  const depthAfterNoOp = app.history.depth;
+
+  return {
+    start, moved, afterUndo, afterRedo,
+    redoOffered, redoGone,
+    beforeShuffle, shuffled, afterShuffleUndo,
+    depthBefore, depthAfterNoOp,
+    unguarded: app.unguardedChanges,
+  };
+}, fire);
+check('a drag can be taken back', undo.moved !== undo.start && undo.afterUndo === undo.start, `${undo.start} -> ${undo.moved} -> ${undo.afterUndo}`);
+check('and put back again', undo.afterRedo === undo.moved);
+check('and doing something new throws the redo away', undo.redoOffered === true && undo.redoGone === true);
+check('a shuffle can be taken back', undo.shuffled !== undo.beforeShuffle && undo.afterShuffleUndo === undo.beforeShuffle, `${undo.beforeShuffle} -> ${undo.shuffled} -> ${undo.afterShuffleUndo}`);
+// Resistance means a 1px press moves nothing, so this also checks the two features agree.
+check('and a press that moved nothing leaves no step behind', undo.depthAfterNoOp === undo.depthBefore, `${undo.depthBefore} -> ${undo.depthAfterNoOp}`);
+
+// 26b. The watchdog. This is the assertion that keeps undo correct as the app grows:
+// press every control in the toolbar and require that nothing moved a piece without
+// recording a way back. A list of call sites I remembered to wrap is not a test.
+const guard = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const before = app.unguardedChanges;
+  const acts = [...document.querySelectorAll('.bar [data-act]')]
+    .map((b) => b.dataset.act)
+    // Leaving the puzzle, opening panels and cutting a new one are not what this is about.
+    .filter((a) => !['new', 'prepare', 'library', 'settings', 'guide', 'challenge', 'full-board'].includes(a));
+  for (const act of acts) {
+    const el = document.querySelector(`.bar [data-act="${act}"]`);
+    if (!el || el.disabled) continue;
+    el.click();
+    await new Promise((r) => setTimeout(r, 260));
+    document.querySelector('.tray-rename')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+  // Two frames, so the watchdog has run after the last of them.
+  await new Promise((r) => setTimeout(r, 400));
+  return { pressed: acts.length, before, after: app.unguardedChanges };
+});
+check(`every control in the toolbar leaves a way back`, guard.after === guard.before, `${guard.pressed} controls pressed, ${guard.after - guard.before} unguarded change(s)`);
+
+// 27. Printing a picture on its own. A print dialog cannot be inspected, so the sheet is
+// produced and read instead -- which is the same reason the challenge sheet is built by a
+// separate function.
+const printing = await page.evaluate(async () => {
+  const app = globalThis.__ojs;
+  const manifest = await (await fetch(`${'/open-jigsaw-studio/'}samples/index.json`)).json();
+  const sample = manifest.samples[0];
+  const url = `${'/open-jigsaw-studio/'}samples/${sample.file.split('/').map(encodeURIComponent).join('/')}`;
+  const blob = await (await fetch(url)).blob();
+  const sheet = await app.pictureSheet(blob, sample.title);
+  const doc = new DOMParser().parseFromString(sheet.html, 'text/html');
+  const img = doc.querySelector('img');
+  return {
+    dpi: sheet.dpi,
+    landscape: sheet.landscape,
+    pageRule: /@page\s*{[^}]*size:\s*A4\s*(landscape|portrait)/.exec(sheet.html)?.[1] ?? null,
+    hasImage: !!img && img.getAttribute('src').startsWith('data:image/'),
+    // Nothing is added to the sheet: no caption, no app name, no border.
+    strayText: doc.body.textContent.trim(),
+    elements: doc.body.children.length,
+    fits: /object-fit:\s*contain/.test(sheet.html),
+  };
+});
+check('a picture can be made into a printable sheet', printing.hasImage === true);
+check('and the page is turned to match the picture', printing.landscape === true && printing.pageRule === 'landscape', `${printing.pageRule}`);
+check('and the picture is fitted, not stretched', printing.fits === true);
+check('and nothing else is put on the sheet', printing.strayText === '' && printing.elements === 1, `${printing.elements} element(s), text: ${JSON.stringify(printing.strayText)}`);
+// The honest number. These posters are about 1536px wide, which is ~140dpi across A4 --
+// good on a wall, soft for fine print. If this ever silently became a claim of 300dpi the
+// feature would be lying to a teacher.
+check('and the resolution reported is the real one', printing.dpi > 100 && printing.dpi < 200, `${printing.dpi}dpi`);
+
+const printButtons = await page.evaluate(async () => {
+  document.querySelector('[data-act="library"]').click();
+  await new Promise((r) => setTimeout(r, 1400));
+  const cards = [...document.querySelectorAll('.sample-card')];
+  const saved = [...document.querySelectorAll('.lib-card:not(.orphaned)')];
+  const out = {
+    cards: cards.length,
+    withPrint: cards.filter((c) => c.querySelector('.sample-print')).length,
+    openStillWorks: cards.filter((c) => c.querySelector('[data-sample]')).length,
+    saved: saved.length,
+    savedWithPrint: saved.filter((c) => c.querySelector('.lib-print')).length,
+    // A button inside a button is invalid and behaves differently everywhere.
+    nestedButtons: cards.filter((c) => c.tagName === 'BUTTON' && c.querySelector('button')).length,
+  };
+  document.querySelector('[data-act="close-library"]').click();
+  return out;
+});
+check('every bundled picture offers a print', printButtons.withPrint === printButtons.cards && printButtons.cards > 0, `${printButtons.withPrint} of ${printButtons.cards}`);
+check('and still offers to open as a puzzle', printButtons.openStillWorks === printButtons.cards);
+check('and no card is a button inside a button', printButtons.nestedButtons === 0);
+check('every saved puzzle offers its picture', printButtons.savedWithPrint === printButtons.saved && printButtons.saved > 0, `${printButtons.savedWithPrint} of ${printButtons.saved}`);
 
 await page.screenshot({ path: new URL('../smoke.png', import.meta.url).pathname });
 console.log('\nwrote smoke.png');

@@ -89,6 +89,17 @@ export interface PointerCallbacks {
    */
   onGrab?(pieceId: number, clusterId: number): void;
   /**
+   * A gesture that can change the puzzle is starting.
+   *
+   * Fired once, at the press, before anything has moved — which is the only moment an
+   * undo snapshot is worth taking, since the state is already half-changed by the time
+   * `onDrop` runs. `onGestureEnd` always follows, so a gesture that turned out to change
+   * nothing can have its snapshot thrown away.
+   */
+  onBeforeChange?(label: string): void;
+  /** The gesture is over, whatever it did or did not do. */
+  onGestureEnd?(): void;
+  /**
    * Take over what a release means.
    *
    * Free-form solving does not merge pieces — two shapes side by side in your
@@ -129,6 +140,8 @@ export class PointerInput {
   private dragResistance = 0;
   /** True once that travel has been paid and the pieces are following the pointer. */
   private dragArmed = false;
+  /** True between `onBeforeChange` and `onGestureEnd`, so the pair is never unbalanced. */
+  private changing = false;
   private detach: Array<() => void> = [];
 
   constructor(
@@ -243,6 +256,8 @@ export class PointerInput {
     const trayHit = this.renderer.trayHitTest(state, world);
     if (trayHit && (trayHit.onHeader || (!hit && !bandGesture))) {
       this.mode = 'tray';
+      this.changing = true;
+      this.cb.onBeforeChange?.('move tray');
       this.dragTrayId = trayHit.tray.id;
       this.trayWasHeaderTap = trayHit.onHeader;
       this.lastWorld = world;
@@ -279,6 +294,8 @@ export class PointerInput {
       this.dragResistance = grabResistance(held);
       this.dragArmed = false;
       this.mode = 'drag';
+      this.changing = true;
+      this.cb.onBeforeChange?.(held > 1 ? 'move pieces' : 'move a piece');
       this.renderer.highlightClusters = new Set(this.dragging);
       this.lastWorld = world;
       // After the selection bookkeeping above, so anything keyed off the grabbed piece
@@ -443,6 +460,12 @@ export class PointerInput {
     this.renderer.highlightClusters = null;
     this.renderer.selectedTray = null;
     this.cb.onChange();
+    // Last, and outside every branch above: the undo entry taken at the press has to be
+    // settled whatever the gesture turned into, including a gesture that was abandoned.
+    if (this.changing) {
+      this.changing = false;
+      this.cb.onGestureEnd?.();
+    }
   }
 
   private finishDrag(): void {
